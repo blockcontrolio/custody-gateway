@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import {ChannelModule} from "./channel/channel.module";
 
 @Module({
-  imports: [],
+  imports: [ChannelModule],
 })
 export class AppModule {}

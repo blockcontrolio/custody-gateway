@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
-import {ChannelModule} from "./channel/channel.module";
+import {ClearNodeModule} from "./clear-node/clear-node.module";
+import {ConfigModule} from "@nestjs/config";
 
 @Module({
-  imports: [ChannelModule],
+  imports: [ClearNodeModule, ConfigModule.forRoot({isGlobal: true})],
 })
 export class AppModule {}

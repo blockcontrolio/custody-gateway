@@ -5,6 +5,16 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  const allowedOrigins = process.env.CORS_ORIGINS?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  app.enableCors(
+    allowedOrigins?.length
+      ? { origin: allowedOrigins, credentials: true }
+      : undefined,
+  );
+
   const config = new DocumentBuilder()
     .setTitle('Custody Gateway')
     .setDescription(

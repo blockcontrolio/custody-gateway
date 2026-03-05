@@ -67,7 +67,11 @@ export class YellowService implements OnModuleDestroy {
         this.handleNotification(parsed.type, parsed.payload);
         break;
       case 'error':
-        this.onError(parsed.error, parsed.requestId);
+        if (parsed.requestId != null) {
+          this.handleResponse('error', parsed.error, parsed.requestId);
+        } else {
+          this.onError(parsed.error, undefined);
+        }
         break;
       case 'unknown':
         this.logger.debug(
@@ -82,37 +86,51 @@ export class YellowService implements OnModuleDestroy {
     result: unknown,
     requestId: number,
   ): void {
-    const pending = this.pendingResponses.get(requestId);
-    if (pending) {
-      this.pendingResponses.delete(requestId);
-      try {
-        pending(result, method);
-      } catch (err) {
-        this.logger.warn(
-          `Pending response handler error for requestId=${requestId}: ${errorMessage(err)}`,
-        );
-      }
-    }
+    this.resolvePending(requestId, result, method);
+
     if (method === 'error') {
       this.onError(String(result), requestId);
       return;
     }
-    if (
-      method === 'session_created' ||
-      (result && typeof result === 'object' && 'sessionId' in result)
-    ) {
-      const sessionId = (result as { sessionId?: string })?.sessionId;
-      void this.onSessionCreated(sessionId ?? String(result));
+
+    const sessionId = this.extractSessionId(result);
+
+    if (method === 'create_app_session' && sessionId) {
+      void this.onSessionCreated(sessionId);
       return;
     }
-    if (method === 'close_app_session') {
-      const r = result as Record<string, unknown>;
-      const sessionId = r?.appSessionId ?? r?.app_session_id ?? r?.sessionId;
-      const id = sessionId != null ? safeString(sessionId) : '';
-      if (id) void this.onSessionClosed(id);
+
+    if (method === 'close_app_session' && sessionId) {
+      void this.onSessionClosed(sessionId);
       return;
     }
+
     this.logger.debug(`Response: method=${method} requestId=${requestId}`);
+  }
+
+  private resolvePending(
+    requestId: number,
+    result: unknown,
+    method: string,
+  ): void {
+    const pending = this.pendingResponses.get(requestId);
+    if (!pending) return;
+    this.pendingResponses.delete(requestId);
+    try {
+      pending(result, method);
+    } catch (err) {
+      this.logger.warn(
+        `Pending callback error for requestId=${requestId}: ${errorMessage(err)}`,
+      );
+    }
+  }
+
+  /** Extract session ID from RPC result (ClearNode uses app_session_id). */
+  private extractSessionId(result: unknown): string {
+    if (!result || typeof result !== 'object') return '';
+    const r = result as Record<string, unknown>;
+    const raw = r.app_session_id ?? r.appSessionId ?? r.sessionId;
+    return raw != null ? safeString(raw) : '';
   }
 
   /** Register a callback for the response with the given requestId (for outgoing requests). */
@@ -273,10 +291,8 @@ export class YellowService implements OnModuleDestroy {
       `[Yellow] app_session_update (asu): ${JSON.stringify(payload)}`,
     );
     const p = payload as Record<string, unknown>;
-    const status = safeString(p?.status).toLowerCase();
-    if (status === 'closed') {
-      const sessionId = p?.appSessionId ?? p?.app_session_id ?? p?.sessionId;
-      const id = sessionId != null ? safeString(sessionId) : '';
+    if (safeString(p?.status).toLowerCase() === 'closed') {
+      const id = this.extractSessionId(p);
       if (id) void this.onSessionClosed(id);
     }
   }

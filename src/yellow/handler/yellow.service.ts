@@ -6,60 +6,15 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Prisma } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
-import {
-  YellowSessionStatus,
-  ChannelStateStatus,
-  SignedStateIntent,
-} from '../yellow.constants';
+import { SessionRepository } from '../../repository/session.repository';
+import type { StoredSession } from '../../repository/session.repository';
+import { ChannelRepository } from '../../repository/channel.repository';
+import { SignedStateRepository } from '../../repository/signed-state.repository';
+import type { PersistSignedStateData } from '../yellow.types';
 import { errorMessage } from '../yellow.utils';
+import type { ParsedMessage } from '../yellow.types';
 
-/** Session shape used by this service (matches YellowSession in yellow.types). Exported for controller return types. */
-export interface StoredSession {
-  sessionId: string;
-  createdAt: number;
-  partnerId?: string;
-  userId?: string;
-}
-
-/** Parsed Nitro RPC message (same shape as yellow.types.ParsedMessage). */
-type ParsedMessage =
-  | {
-      kind: 'response';
-      requestId: number;
-      method: string;
-      result: unknown;
-      timestamp?: number;
-    }
-  | {
-      kind: 'request';
-      requestId: number;
-      method: string;
-      params: unknown;
-      timestamp?: number;
-    }
-  | { kind: 'notification'; type: string; payload: unknown }
-  | { kind: 'error'; requestId?: number; error: string; timestamp?: number }
-  | { kind: 'unknown'; raw: unknown };
-
-/** Channel status (same as yellow.types.ChannelStateStatus). */
-type ChannelStateStatusType = 'active' | 'closed' | 'challenged';
-
-/** Signed state intent (same as yellow.types.SignedStateIntent). */
-type SignedStateIntentType = 'OPERATE' | 'INITIALIZE' | 'RESIZE' | 'FINALIZE';
-
-/** Data for persistSignedState (same shape as yellow.types.PersistSignedStateData). */
-interface PersistSignedStateData {
-  channelId: string;
-  sessionId?: string;
-  stateVersion: number;
-  intent: string;
-  stateData: unknown;
-  allocations: unknown;
-  signatures: unknown;
-  rawMessage: string;
-}
+export type { StoredSession } from '../../repository/session.repository';
 
 /** Coerce to string only when value is string or number; avoid '[object Object]'. */
 function safeString(value: unknown): string {
@@ -71,7 +26,7 @@ function safeString(value: unknown): string {
 @Injectable()
 export class YellowService implements OnModuleDestroy {
   private readonly logger = new Logger(YellowService.name);
-  /** Active sessions by sessionId (cache). */
+  /** Active sessions by sessionId (in-memory cache). */
   private readonly sessions = new Map<string, StoredSession>();
   /** Pending response callbacks by requestId (for outgoing requests). */
   private readonly pendingResponses = new Map<
@@ -83,8 +38,14 @@ export class YellowService implements OnModuleDestroy {
     @Inject(ConfigService)
     private readonly configService: Pick<ConfigService, 'get'>,
     @Optional()
-    @Inject(PrismaService)
-    private readonly prisma?: PrismaService,
+    @Inject(SessionRepository)
+    private readonly sessionRepo?: SessionRepository,
+    @Optional()
+    @Inject(ChannelRepository)
+    private readonly channelRepo?: ChannelRepository,
+    @Optional()
+    @Inject(SignedStateRepository)
+    private readonly signedStateRepo?: SignedStateRepository,
   ) {}
 
   isEnabled(): boolean {
@@ -225,87 +186,35 @@ export class YellowService implements OnModuleDestroy {
     const session: StoredSession = { sessionId, createdAt: now };
     this.sessions.set(sessionId, session);
     this.logger.log(`[Yellow] session_created: ${sessionId}`);
-    if (this.prisma) {
-      try {
-        await this.prisma.yellowSession.upsert({
-          where: { sessionId },
-          create: { sessionId, status: YellowSessionStatus.active },
-          update: { status: YellowSessionStatus.active },
-        });
-      } catch (err) {
-        this.logger.warn(
-          `Failed to persist session ${sessionId}: ${errorMessage(err)}`,
-        );
-      }
+    if (this.sessionRepo) {
+      await this.sessionRepo.upsertActive(sessionId);
     }
   }
 
-  /**
-   * Mark session as closed.
-   * Called on close_app_session RPC response success or asu notification with status=closed.
-   */
   async onSessionClosed(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
     this.logger.log(`[Yellow] session_closed: ${sessionId}`);
-    if (this.prisma) {
-      try {
-        const closedAt = new Date();
-        await this.prisma.yellowSession.upsert({
-          where: { sessionId },
-          create: { sessionId, status: YellowSessionStatus.closed, closedAt },
-          update: { status: YellowSessionStatus.closed, closedAt },
-        });
-      } catch (err) {
-        this.logger.warn(
-          `Failed to mark session ${sessionId} closed: ${errorMessage(err)}`,
-        );
-      }
+    if (this.sessionRepo) {
+      await this.sessionRepo.markClosed(sessionId);
     }
   }
 
   async getSession(sessionId: string): Promise<StoredSession | undefined> {
     const cached = this.sessions.get(sessionId);
     if (cached) return cached;
-    if (this.prisma) {
-      try {
-        const row = await this.prisma.yellowSession.findUnique({
-          where: { sessionId },
-        });
-        if (row?.status === YellowSessionStatus.active) {
-          const session: StoredSession = {
-            sessionId: row.sessionId,
-            createdAt: row.createdAt.getTime(),
-            partnerId: row.partnerId ?? undefined,
-            userId: row.userId ?? undefined,
-          };
-          this.sessions.set(sessionId, session);
-          return session;
-        }
-      } catch (err) {
-        this.logger.warn(
-          `Failed to fetch session ${sessionId}: ${errorMessage(err)}`,
-        );
+    if (this.sessionRepo) {
+      const session = await this.sessionRepo.findActive(sessionId);
+      if (session) {
+        this.sessions.set(sessionId, session);
+        return session;
       }
     }
     return undefined;
   }
 
-  /** All known sessions (active only). */
   async getAllSessions(): Promise<StoredSession[]> {
-    if (this.prisma) {
-      try {
-        const rows = await this.prisma.yellowSession.findMany({
-          where: { status: YellowSessionStatus.active },
-        });
-        return rows.map((r) => ({
-          sessionId: r.sessionId,
-          createdAt: r.createdAt.getTime(),
-          partnerId: r.partnerId ?? undefined,
-          userId: r.userId ?? undefined,
-        }));
-      } catch (err) {
-        this.logger.warn(`Failed to fetch sessions: ${errorMessage(err)}`);
-      }
+    if (this.sessionRepo) {
+      return this.sessionRepo.findAllActive();
     }
     return Array.from(this.sessions.values());
   }
@@ -324,7 +233,6 @@ export class YellowService implements OnModuleDestroy {
     this.logger.log(
       `[Yellow] payment: amount=${amount} sender=${sender} recipient=${recipient}`,
     );
-    // TODO: call internal API/event when integration is ready
   }
 
   onSessionMessage(payload: unknown): void {
@@ -341,8 +249,8 @@ export class YellowService implements OnModuleDestroy {
     this.logger.debug(
       `[Yellow] channel_update (cu): ${JSON.stringify(payload)}`,
     );
-    if (this.prisma) {
-      this.persistChannelUpdate(payload).catch((err) =>
+    if (this.channelRepo) {
+      this.channelRepo.upsertFromPayload(payload).catch((err) =>
         this.logger.warn(
           `Failed to persist channel update: ${errorMessage(err)}`,
         ),
@@ -350,84 +258,9 @@ export class YellowService implements OnModuleDestroy {
     }
   }
 
-  private parseChannelStateStatus(raw: unknown): ChannelStateStatusType {
-    const s =
-      (raw != null ? safeString(raw) : 'active').toLowerCase() || 'active';
-    if (s === 'closed') return ChannelStateStatus.closed;
-    if (s === 'challenged') return ChannelStateStatus.challenged;
-    return ChannelStateStatus.active;
-  }
-
-  private async persistChannelUpdate(payload: unknown): Promise<void> {
-    if (!this.prisma) return;
-    const p = payload as Record<string, unknown>;
-    const channelId = safeString(p?.channelId ?? p?.channel_id) || '';
-    if (!channelId) return;
-    const status = this.parseChannelStateStatus(p?.status);
-    const participants = Array.isArray(p?.participants)
-      ? (p.participants as unknown[])
-      : p?.participant != null
-        ? [p.participant]
-        : [];
-    const chainId =
-      typeof p?.chainId === 'number'
-        ? p.chainId
-        : typeof p?.chain_id === 'number'
-          ? p.chain_id
-          : null;
-    const token = p?.token != null ? safeString(p.token) : null;
-    const balance =
-      p?.amount != null || p?.balance != null ? (p.balance ?? p.amount) : null;
-    const participantsJson = participants as Prisma.InputJsonValue;
-    const balanceJson = balance as Prisma.InputJsonValue | null;
-    await this.prisma.channelState.upsert({
-      where: { channelId },
-      create: {
-        channelId,
-        status,
-        participants: participantsJson,
-        chainId,
-        token,
-        balance: balanceJson ?? undefined,
-      },
-      update: {
-        status,
-        participants: participantsJson,
-        chainId,
-        token,
-        balance: balanceJson ?? undefined,
-        lastUpdate: new Date(),
-      },
-    });
-  }
-
-  private parseSignedStateIntent(raw: unknown): SignedStateIntentType {
-    const s =
-      (raw != null ? safeString(raw) : 'OPERATE').toUpperCase() || 'OPERATE';
-    if (s === 'INITIALIZE') return SignedStateIntent.INITIALIZE;
-    if (s === 'RESIZE') return SignedStateIntent.RESIZE;
-    if (s === 'FINALIZE') return SignedStateIntent.FINALIZE;
-    return SignedStateIntent.OPERATE;
-  }
-
-  /** Persist signed state for dispute resolution (called from yellow-client after RPC response). */
   async persistSignedState(data: PersistSignedStateData): Promise<void> {
-    if (!this.prisma) return;
-    try {
-      await this.prisma.signedState.create({
-        data: {
-          channelId: data.channelId,
-          sessionId: data.sessionId ?? undefined,
-          stateVersion: data.stateVersion,
-          intent: this.parseSignedStateIntent(data.intent),
-          stateData: data.stateData as object,
-          allocations: data.allocations as object,
-          signatures: data.signatures as object,
-          rawMessage: data.rawMessage,
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to persist signed state: ${errorMessage(err)}`);
+    if (this.signedStateRepo) {
+      await this.signedStateRepo.create(data);
     }
   }
 
@@ -452,6 +285,5 @@ export class YellowService implements OnModuleDestroy {
     this.logger.error(
       `[Yellow] error${requestId != null ? ` requestId=${requestId}` : ''}: ${error}`,
     );
-    // TODO: metrics/alerts when needed
   }
 }

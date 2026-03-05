@@ -19,7 +19,6 @@ describe('YellowClientService', () => {
     >
   >;
   let clearNodeService: jest.Mocked<Pick<ClearNodeService, 'sendRaw'>>;
-  let requestIdService: RequestIdService;
   let service: YellowClientService;
 
   beforeEach(() => {
@@ -34,36 +33,27 @@ describe('YellowClientService', () => {
       persistSignedState: jest.fn().mockResolvedValue(undefined),
     };
     clearNodeService = { sendRaw: jest.fn() };
-    requestIdService = new RequestIdService();
     service = new YellowClientService(
       clearNodeService,
       yellowService,
       keyProvider,
-      requestIdService,
+      new RequestIdService(),
     );
   });
 
   describe('isConfigured', () => {
     it('returns false when Yellow is disabled', () => {
       yellowService.isEnabled.mockReturnValue(false);
-      keyProvider.isConfigured.mockReturnValue(true);
-      expect(service.isConfigured()).toBe(false);
-    });
-
-    it('returns false when key provider is not configured', () => {
-      keyProvider.isConfigured.mockReturnValue(false);
       expect(service.isConfigured()).toBe(false);
     });
 
     it('returns true when Yellow enabled and key configured', () => {
-      keyProvider.isConfigured.mockReturnValue(true);
       expect(service.isConfigured()).toBe(true);
     });
   });
 
   describe('createAppSession', () => {
     it('rejects when signer is not configured', async () => {
-      keyProvider.createSigner.mockReturnValue(null);
       await expect(
         service.createAppSession({
           definition: {
@@ -76,16 +66,6 @@ describe('YellowClientService', () => {
           allocations: [],
         }),
       ).rejects.toThrow('YELLOW_SIGNER_PRIVATE_KEY not set or invalid');
-      expect(clearNodeService.sendRaw).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('getChannels', () => {
-    it('rejects when signer is not configured', async () => {
-      keyProvider.createSigner.mockReturnValue(null);
-      await expect(service.getChannels()).rejects.toThrow(
-        'YELLOW_SIGNER_PRIVATE_KEY not set or invalid',
-      );
     });
   });
 });

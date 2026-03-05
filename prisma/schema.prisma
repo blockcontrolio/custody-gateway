@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum YellowSessionStatus {
+  active
+  closed
+}
+
+enum SignedStateIntent {
+  OPERATE
+  INITIALIZE
+  RESIZE
+  FINALIZE
+}
+
+enum ChannelStateStatus {
+  active
+  closed
+  challenged
+}
+
+model YellowSession {
+  id        String             @id @default(cuid())
+  sessionId String             @unique
+  status    YellowSessionStatus @default(active)
+  partnerId String?
+  userId    String?
+  metadata  Json?
+  createdAt DateTime           @default(now())
+  closedAt  DateTime?
+}
+
+model SignedState {
+  id           String           @id @default(cuid())
+  channelId    String
+  sessionId    String?
+  stateVersion Int
+  intent       SignedStateIntent
+  stateData    Json // full state snapshot
+  allocations  Json // fund distribution
+  signatures   Json // array of 0x-prefixed hex
+  rawMessage   String // original signed JSON for dispute
+  createdAt    DateTime         @default(now())
+
+  @@index([channelId])
+  @@index([sessionId])
+}
+
+model ChannelState {
+  id           String            @id @default(cuid())
+  channelId    String            @unique
+  status       ChannelStateStatus @default(active)
+  participants Json // [address, address]
+  chainId      Int?
+  token        String?
+  balance      Json?
+  lastUpdate   DateTime          @default(now())
+  createdAt    DateTime          @default(now())
+}

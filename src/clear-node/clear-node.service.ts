@@ -1,72 +1,203 @@
-import {Injectable, Logger, OnModuleDestroy, OnModuleInit} from '@nestjs/common';
-import {ConfigService} from '@nestjs/config'
-import WebSocket, {MessageEvent} from 'ws';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import WebSocket, { MessageEvent } from 'ws';
+import { YellowAuthService } from '../yellow/auth/yellow-auth.service';
+import { YellowService } from '../yellow/handler/yellow.service';
+import { YellowParserService } from '../yellow/parser/yellow-parser.service';
+import { DEFAULT_MAX_RECONNECT_DELAY_MS } from './clear-node.constants';
+import { errorMessage } from '../yellow/yellow.utils';
 
 type Json = Record<string, unknown>;
 
+/** Safely convert WebSocket message data (string | Buffer | ArrayBuffer | Buffer[]) to string. */
+function messageDataToText(data: unknown): string {
+  if (typeof data === 'string') return data;
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  if (
+    Array.isArray(data) &&
+    data.every((chunk): chunk is Buffer => Buffer.isBuffer(chunk))
+  ) {
+    return Buffer.concat(data).toString('utf8');
+  }
+  return typeof data === 'object' && data !== null
+    ? JSON.stringify(data)
+    : String(data);
+}
+
 @Injectable()
 export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
-    private readonly logger = new Logger(ClearNodeService.name);
-    private readonly url: string;
-    private ws?: WebSocket;
+  private readonly logger = new Logger(ClearNodeService.name);
+  private readonly url: string;
+  private ws?: WebSocket;
 
-    constructor(private readonly configService: ConfigService) {
-        this.url = this.configService.getOrThrow<string>('CLEARNODE_URL');
-        this.logger.log(`Using ClearNode URL: ${this.url}`);
+  // Reconnect state
+  private reconnectAttempt = 0;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private shuttingDown = false;
+
+  // Connection state for health checks
+  private connectionState: 'connected' | 'disconnected' | 'reconnecting' =
+    'disconnected';
+
+  constructor(
+    @Inject(ConfigService)
+    private readonly configService: Pick<ConfigService, 'get' | 'getOrThrow'>,
+    @Inject(YellowParserService)
+    private readonly yellowParserService: Pick<
+      YellowParserService,
+      'parse' | 'parseAndVerify'
+    >,
+    @Inject(YellowService)
+    private readonly yellowService: Pick<
+      YellowService,
+      'isEnabled' | 'handleMessage'
+    >,
+    @Inject(forwardRef(() => YellowAuthService))
+    private readonly yellowAuthService: Pick<
+      YellowAuthService,
+      'isConfigured' | 'startAuth'
+    >,
+  ) {
+    this.url = this.configService.getOrThrow<string>('CLEARNODE_URL');
+    this.logger.log(`Using ClearNode URL: ${this.url}`);
+  }
+
+  onModuleInit() {
+    this.connect();
+  }
+
+  onModuleDestroy() {
+    this.shuttingDown = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
     }
-
-    onModuleInit() {
-        this.connect();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.close(1000, 'App shutting down');
     }
+    this.connectionState = 'disconnected';
+  }
 
-    onModuleDestroy() {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.close(1000, 'App shutting down');
-        }
-    }
+  getConnectionState(): 'connected' | 'disconnected' | 'reconnecting' {
+    return this.connectionState;
+  }
 
-    private connect() {
-        this.ws = new WebSocket(this.url);
+  private connect() {
+    this.ws = new WebSocket(this.url);
 
-        this.ws.onopen = () => {
-            this.logger.log('WebSocket connection established');
-            // Optionally: this.sendJson({ type: 'auth', token: '...' });
-        };
+    this.ws.onopen = () => {
+      this.logger.log('WebSocket connection established');
+      this.reconnectAttempt = 0;
+      this.connectionState = 'connected';
+      if (
+        this.yellowService.isEnabled() &&
+        this.yellowAuthService.isConfigured()
+      ) {
+        this.yellowAuthService.startAuth().catch((err) => {
+          this.logger.warn(
+            `Yellow auth on connect failed: ${errorMessage(err)}`,
+          );
+        });
+      }
+    };
 
-        this.ws.onmessage = (event: MessageEvent) => {
-            const text = event.data.toString();
-            try {
-                const msg = JSON.parse(text);
-                this.logger.debug(`Received JSON: ${JSON.stringify(msg)}`);
-                // TODO: handle msg
-            } catch {
-                this.logger.debug(`Received text: ${text}`);
-                // TODO: handle plain text if needed
+    this.ws.onmessage = (event: MessageEvent) => {
+      const text = messageDataToText(event.data);
+      try {
+        if (this.yellowService.isEnabled()) {
+          const signerAddress = this.configService.get<string>(
+            'CLEARNODE_SIGNER_ADDRESS',
+          );
+          if (signerAddress) {
+            // Async verification path
+            void this.yellowParserService
+              .parseAndVerify(text, signerAddress)
+              .then((parsed) => {
+                if (parsed) {
+                  this.yellowService.handleMessage(parsed);
+                } else {
+                  this.logger.debug(
+                    `Received (unparsed): ${text.slice(0, 200)}`,
+                  );
+                }
+              })
+              .catch((err) => {
+                this.logger.warn(
+                  `Message verification error: ${errorMessage(err)}`,
+                );
+              });
+          } else {
+            const parsed = this.yellowParserService.parse(text);
+            if (parsed) {
+              this.yellowService.handleMessage(parsed);
+            } else {
+              this.logger.debug(`Received (unparsed): ${text.slice(0, 200)}`);
             }
-        };
-
-        this.ws.on('error', (err) => {
-            this.logger.error(`WebSocket error: ${err.message}`);
-        });
-
-        this.ws.on('close', (code, reason) => {
-            this.logger.warn(`WebSocket closed: ${code} ${reason.toString()}`);
-        });
-    }
-
-    /** Send a JSON message if socket is open */
-    sendJson(message: Json) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            throw new Error('WebSocket is not open');
+          }
+        } else {
+          const msg: unknown = JSON.parse(text);
+          this.logger.debug(`Received JSON: ${JSON.stringify(msg)}`);
         }
-        this.ws.send(JSON.stringify(message));
-    }
+      } catch (err) {
+        this.logger.warn(`Message handling error: ${errorMessage(err)}`);
+        this.logger.debug(`Raw message: ${text.slice(0, 300)}`);
+      }
+    };
 
-    /** Optional: raw send */
-    sendRaw(data: string | Buffer) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            throw new Error('WebSocket is not open');
-        }
-        this.ws.send(data);
+    this.ws.on('error', (err) => {
+      this.logger.error(`WebSocket error: ${err.message}`);
+    });
+
+    this.ws.on('close', (code, reason) => {
+      this.logger.warn(
+        `WebSocket closed: ${code} ${messageDataToText(reason)}`,
+      );
+      this.connectionState = 'disconnected';
+      if (!this.shuttingDown) {
+        this.scheduleReconnect();
+      }
+    });
+  }
+
+  private scheduleReconnect(): void {
+    const maxDelay = Number(
+      this.configService.get<string>('WS_RECONNECT_MAX_DELAY_MS') ||
+        DEFAULT_MAX_RECONNECT_DELAY_MS,
+    );
+    const delay =
+      Math.min(1000 * 2 ** this.reconnectAttempt, maxDelay) +
+      Math.random() * 1000;
+    this.connectionState = 'reconnecting';
+    this.logger.log(
+      `Scheduling reconnect attempt ${this.reconnectAttempt + 1} in ${Math.round(delay)}ms`,
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectAttempt++;
+      this.connect();
+    }, delay);
+  }
+
+  private ensureOpen(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not open');
     }
+  }
+
+  sendJson(message: Json): void {
+    this.ensureOpen();
+    this.ws!.send(JSON.stringify(message));
+  }
+
+  sendRaw(data: string | Buffer): void {
+    this.ensureOpen();
+    this.ws!.send(data);
+  }
 }

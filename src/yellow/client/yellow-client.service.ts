@@ -4,12 +4,14 @@ import {
   createSubmitAppStateMessage,
   createCloseAppSessionMessage,
   createGetChannelsMessage,
+  createResizeChannelMessage,
   createTransferMessage,
 } from '@erc7824/nitrolite';
 import type {
   MessageSigner,
   CreateAppSessionRequestParams,
   CloseAppSessionRequestParams,
+  ResizeChannelRequestParams,
   TransferRequestParams,
 } from '@erc7824/nitrolite';
 import { RPCChannelStatus } from '@erc7824/nitrolite';
@@ -146,6 +148,14 @@ export class YellowClientService {
   ): Promise<unknown> {
     return this.rpc('get_channels', (s, id) =>
       createGetChannelsMessage(s, participant, status, id),
+    );
+  }
+
+  async resizeChannel(
+    params: ResizeChannelRequestParams,
+  ): Promise<unknown> {
+    return this.rpc('resize_channel', (s, id) =>
+      createResizeChannelMessage(s, params, id),
     );
   }
 

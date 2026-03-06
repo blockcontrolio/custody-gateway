@@ -27,6 +27,7 @@ import {
   CreateAppSessionDto,
   SubmitAppStateDto,
   CloseAppSessionDto,
+  ResizeChannelDto,
   TransferDto,
   StoredSessionDto,
 } from './dto';
@@ -192,6 +193,33 @@ export class YellowController {
       participant as Hex | undefined,
       statusEnum,
     );
+  }
+
+  /** Resize channel — add or remove funds without closing. */
+  @Post('channels/:channelId/resize')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resize channel (resize_channel)' })
+  @ApiParam({ name: 'channelId', description: 'Channel ID (hex)' })
+  @ApiBody({ type: ResizeChannelDto })
+  @ApiOkResponse({ description: 'RPC result' })
+  async resizeChannel(
+    @Param('channelId') channelId: string,
+    @Body() body: ResizeChannelDto,
+  ): Promise<unknown> {
+    this.ensureYellowReady();
+    if (!body.funds_destination) {
+      throw new BadRequestException('funds_destination is required');
+    }
+    return this.yellowClient.resizeChannel({
+      channel_id: channelId as Hex,
+      ...(body.resize_amount != null && {
+        resize_amount: BigInt(body.resize_amount),
+      }),
+      ...(body.allocate_amount != null && {
+        allocate_amount: BigInt(body.allocate_amount),
+      }),
+      funds_destination: body.funds_destination as Hex,
+    });
   }
 
   /** Transfer (transfer). */

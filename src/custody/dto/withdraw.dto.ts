@@ -2,10 +2,10 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class WithdrawDto {
   @ApiProperty({
-    example: 'A',
-    description: 'Wallet identifier: "A" (primary) or "B" (secondary)',
+    example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2',
+    description: 'Ethereum address of the managed wallet',
   })
-  wallet: string;
+  address: string;
 
   @ApiProperty({
     example: '0x0000000000000000000000000000000000000000',

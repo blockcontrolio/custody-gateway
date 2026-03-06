@@ -1,177 +1,124 @@
 /**
  * Full sandbox flow via custody-gateway HTTP API:
- *   connect (gateway does WS + auth) → create session → transfer 1 → transfer 2 → close.
- * Gateway persists session to DB; you can query it after.
+ *   check balance → create session → transfer A→B → check balance → close session.
  *
  * Prerequisites:
- *   - Gateway running: npm run start:dev (with CLEARNODE_URL, DATABASE_URL, YELLOW_SIGNER_PRIVATE_KEY)
- *   - DB up and migrated: docker compose up -d && npx prisma migrate dev
+ *   - Gateway running: docker compose up -d --build
+ *   - DB up and migrated
+ *   - Wallets funded (POST /yellow/faucet)
  *
  * Run: npx ts-node -r tsconfig-paths/register scripts/sandbox-api-flow.ts
- * Or: npm run sandbox:flow
+ * Or:  npm run sandbox:flow
  */
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3333';
-const WALLET_A =
-  process.env.YELLOW_SANDBOX_WALLET_A ??
-  '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2';
-const WALLET_B =
-  process.env.YELLOW_SANDBOX_WALLET_B ??
-  '0xF44020407a75d7B8525d7aEC114A16f7ebbfc9d6';
-const ZERO = '0x0000000000000000000000000000000000000000' as const;
+const WALLET_A = '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2';
+const WALLET_B = '0xF44020407a75d7B8525d7aEC114A16f7ebbfc9d6';
+const ASSET = 'ytest.usd';
 
 function log(step: string, detail?: string): void {
   const line = detail ? `${step} — ${detail}` : step;
   console.log(`[${new Date().toISOString()}] ${line}`);
 }
 
-function headers(): Record<string, string> {
-  return { 'Content-Type': 'application/json' };
+async function api(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(`${method} ${path} → ${res.status}: ${JSON.stringify(json)}`);
+  }
+  return json;
 }
 
 async function main(): Promise<void> {
-  log('1. Status', 'GET /yellow/status');
-  let statusRes: Response;
-  try {
-    statusRes = await fetch(`${BASE_URL}/yellow/status`, {
-      headers: headers(),
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
-      console.error(
-        'Cannot reach gateway at',
-        BASE_URL,
-        '— start it with: npm run start:dev',
-      );
-    } else {
-      console.error(msg);
-    }
-    process.exit(1);
-  }
-  if (!statusRes.ok) {
-    console.error('Status failed:', statusRes.status, await statusRes.text());
-    process.exit(1);
-  }
-  const status = (await statusRes.json()) as {
-    enabled?: boolean;
-    configured?: boolean;
-    hasSessionToken?: boolean;
-  };
-  log('   enabled:', String(status.enabled));
-  log('   configured:', String(status.configured));
-  log('   hasSessionToken:', String(status.hasSessionToken));
-  if (!status.enabled || !status.configured) {
-    console.error(
-      'Gateway not enabled or not configured (check YELLOW_SIGNER_PRIVATE_KEY, CLEARNODE_URL).',
-    );
-    process.exit(1);
+  // 1. Health check
+  log('1. Health check');
+  const health = (await api('GET', '/health')) as Record<string, string>;
+  log(`   ws=${health.websocket} db=${health.database} auth=${health.auth}`);
+  if (health.websocket !== 'connected') {
+    throw new Error('WebSocket not connected, wait and retry');
   }
 
-  log('2. Create session', 'POST /yellow/sessions');
-  const createBody = {
+  // 2. Check ledger balance before
+  log('2. Ledger balance (before)');
+  const balanceBefore = (await api('GET', '/yellow/ledger-balances')) as {
+    ledger_balances: Array<{ asset: string; amount: string }>;
+  };
+  const ytestBefore =
+    balanceBefore.ledger_balances.find((b) => b.asset === ASSET)?.amount ?? '0';
+  log(`   Wallet A: ${ytestBefore} ${ASSET}`);
+
+  // 3. Create app session (A + B, with ytest.usd allocations)
+  log('3. Create session');
+  const createResult = (await api('POST', '/yellow/sessions', {
     definition: {
       protocol: 'NitroRPC/0.2',
       participants: [WALLET_A, WALLET_B],
-      weights: [1, 1],
-      quorum: 2,
-      challenge: 86400,
+      weights: [100, 0],
+      quorum: 100,
+      challenge: 0,
       nonce: Date.now(),
     },
     allocations: [
-      { asset: ZERO, amount: '1000000', participant: WALLET_A },
-      { asset: ZERO, amount: '1000000', participant: WALLET_B },
+      { asset: ASSET, amount: '1000000', participant: WALLET_A },
+      { asset: ASSET, amount: '1000000', participant: WALLET_B },
     ],
+  })) as Record<string, unknown>;
+  const sessionId = (createResult.app_session_id ??
+    createResult.appSessionId ??
+    createResult.sessionId) as string;
+  log(`   sessionId: ${sessionId}`);
+
+  // 4. Transfer 1 USD from A → B
+  log('4. Transfer A → B (1 USD)');
+  const transferResult = await api('POST', '/yellow/transfer', {
+    destination: WALLET_B,
+    allocations: [{ asset: ASSET, amount: '1000000' }],
+  });
+  log(`   result: ${JSON.stringify(transferResult)}`);
+
+  // 5. Check ledger balance after transfer
+  log('5. Ledger balance (after transfer)');
+  const balanceAfter = (await api('GET', '/yellow/ledger-balances')) as {
+    ledger_balances: Array<{ asset: string; amount: string }>;
   };
-  const createRes = await fetch(`${BASE_URL}/yellow/sessions`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify(createBody),
-  });
-  if (!createRes.ok) {
-    console.error(
-      'Create session failed:',
-      createRes.status,
-      await createRes.text(),
-    );
-    process.exit(1);
-  }
-  const createResult = (await createRes.json()) as Record<string, unknown>;
-  const sessionId =
-    typeof createResult.sessionId === 'string'
-      ? createResult.sessionId
-      : typeof createResult.app_session_id === 'string'
-        ? createResult.app_session_id
-        : String(createResult.sessionId ?? createResult.app_session_id ?? '');
-  log('   sessionId:', sessionId);
+  const ytestAfter =
+    balanceAfter.ledger_balances.find((b) => b.asset === ASSET)?.amount ?? '0';
+  log(`   Wallet A: ${ytestAfter} ${ASSET} (was ${ytestBefore})`);
 
-  log('3. Transfer 1 (A → B)', 'POST /yellow/transfer');
-  const transfer1Res = await fetch(`${BASE_URL}/yellow/transfer`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify({
-      destination: WALLET_B,
-      allocations: [{ asset: ZERO, amount: '100000' }],
-    }),
-  });
-  if (!transfer1Res.ok) {
-    console.error(
-      'Transfer 1 failed:',
-      transfer1Res.status,
-      await transfer1Res.text(),
-    );
-    process.exit(1);
-  }
-  log('   OK');
-
-  log('4. Transfer 2 (B → A)', 'POST /yellow/transfer');
-  const transfer2Res = await fetch(`${BASE_URL}/yellow/transfer`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify({
-      destination: WALLET_A,
-      allocations: [{ asset: ZERO, amount: '50000' }],
-    }),
-  });
-  if (!transfer2Res.ok) {
-    console.error(
-      'Transfer 2 failed:',
-      transfer2Res.status,
-      await transfer2Res.text(),
-    );
-    process.exit(1);
-  }
-  log('   OK');
-
-  log('5. Close session', `POST /yellow/sessions/${sessionId}/close`);
-  const closeBody = {
-    allocations: [
-      { asset: ZERO, amount: '950000', participant: WALLET_A },
-      { asset: ZERO, amount: '1050000', participant: WALLET_B },
-    ],
-  };
-  const closeRes = await fetch(
-    `${BASE_URL}/yellow/sessions/${sessionId}/close`,
+  // 6. Close session
+  log('6. Close session');
+  const closeResult = await api(
+    'POST',
+    `/yellow/sessions/${sessionId}/close`,
     {
-      method: 'POST',
-      headers: headers(),
-      body: JSON.stringify(closeBody),
+      allocations: [
+        { asset: ASSET, amount: '0', participant: WALLET_A },
+        { asset: ASSET, amount: '2000000', participant: WALLET_B },
+      ],
     },
   );
-  if (!closeRes.ok) {
-    console.error('Close failed:', closeRes.status, await closeRes.text());
-    process.exit(1);
-  }
-  log('   OK');
+  log(`   result: ${JSON.stringify(closeResult)}`);
 
-  log('Done.');
-  console.log('\nПроверить сессию в БД:');
-  console.log('  npx prisma studio');
-  console.log(
-    '  или: psql $DATABASE_URL -c \'SELECT * FROM "YellowSession";\'',
-  );
+  // 7. Verify session in DB
+  log('7. Verify session');
+  const sessions = (await api('GET', '/yellow/sessions')) as Array<{
+    sessionId: string;
+  }>;
+  const found = sessions.find((s) => s.sessionId === sessionId);
+  log(`   session ${sessionId} in DB: ${found ? 'YES' : 'NO'}`);
+
+  log('Done!');
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error('\nFAILED:', err instanceof Error ? err.message : err);
   process.exit(1);
 });

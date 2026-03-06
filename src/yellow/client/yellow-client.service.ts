@@ -6,6 +6,8 @@ import {
   createGetChannelsMessage,
   createResizeChannelMessage,
   createTransferMessage,
+  createGetLedgerBalancesMessage,
+  createECDSAMessageSigner,
 } from '@erc7824/nitrolite';
 import type {
   MessageSigner,
@@ -20,6 +22,7 @@ import { ClearNodeService } from '../../clear-node/clear-node.service';
 import { YellowService } from '../handler/yellow.service';
 import type { PersistSignedStateData } from '../yellow.types';
 import { KeyProviderService } from '../providers/key-provider.service';
+import { KeyProvider } from '../../key-provider';
 import { RequestIdService } from '../providers/request-id.service';
 import { RPC_TIMEOUT_MS } from '../yellow.constants';
 import { toError } from '../yellow.utils';
@@ -45,6 +48,8 @@ export class YellowClientService {
       'isConfigured' | 'createSigner'
     >,
     private readonly requestIdService: RequestIdService,
+    @Inject(KeyProvider)
+    private readonly globalKeyProvider: KeyProvider,
   ) {}
 
   isConfigured(): boolean {
@@ -115,9 +120,45 @@ export class YellowClientService {
   async createAppSession(
     params: CreateAppSessionRequestParams,
   ): Promise<unknown> {
-    return this.rpc('create_app_session', (s, id) =>
-      createAppSessionMessage(s, params, id),
-    );
+    const participants = (params.definition?.participants ?? []) as Hex[];
+    return this.rpc('create_app_session', async (s, id) => {
+      const msg = await createAppSessionMessage(s, params, id);
+      if (participants.length > 1) {
+        return this.addCoSignatures(msg, participants);
+      }
+      return msg;
+    });
+  }
+
+  /**
+   * Co-sign a message for all participants whose keys are in the KeyProvider.
+   * ClearNode requires signatures from every participant in the session.
+   */
+  private async addCoSignatures(
+    msg: string,
+    participants: Hex[],
+  ): Promise<string> {
+    const parsed = JSON.parse(msg) as { req: unknown; sig: Hex[] };
+    if (!parsed.req || !Array.isArray(parsed.sig)) return msg;
+
+    const sigs: Hex[] = [];
+    for (const addr of participants) {
+      const key = this.globalKeyProvider.getKey(addr);
+      if (!key) continue;
+      const signer = createECDSAMessageSigner(key);
+      sigs.push(
+        await signer(parsed.req as Parameters<MessageSigner>[0]),
+      );
+    }
+
+    if (sigs.length > 1) {
+      this.logger.debug(
+        `Co-signed create_app_session for ${sigs.length}/${participants.length} participants`,
+      );
+      parsed.sig = sigs;
+      return JSON.stringify(parsed);
+    }
+    return msg;
   }
 
   async submitAppState(params: {
@@ -156,6 +197,12 @@ export class YellowClientService {
   ): Promise<unknown> {
     return this.rpc('resize_channel', (s, id) =>
       createResizeChannelMessage(s, params, id),
+    );
+  }
+
+  async getLedgerBalances(accountId?: string): Promise<unknown> {
+    return this.rpc('get_ledger_balances', (s, id) =>
+      createGetLedgerBalancesMessage(s, accountId, id),
     );
   }
 

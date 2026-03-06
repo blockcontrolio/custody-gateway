@@ -101,7 +101,7 @@ export class YellowController {
   /** Create app session (create_app_session). */
   @Post('sessions')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create app session (create_app_session)' })
+  @ApiOperation({ summary: 'Create app session' })
   @ApiBody({ type: CreateAppSessionDto })
   @ApiCreatedResponse({
     description: 'RPC result (sessionId / app_session_id)',
@@ -121,7 +121,7 @@ export class YellowController {
   /** Submit app state (submit_app_state, protocol 0.2). */
   @Post('sessions/:sessionId/state')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Submit app state (submit_app_state)' })
+  @ApiOperation({ summary: 'Submit app state' })
   @ApiParam({ name: 'sessionId' })
   @ApiBody({ type: SubmitAppStateDto })
   @ApiOkResponse({ description: 'RPC result' })
@@ -145,7 +145,7 @@ export class YellowController {
   /** Close app session (close_app_session). */
   @Post('sessions/:sessionId/close')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Close app session (close_app_session)' })
+  @ApiOperation({ summary: 'Close app session' })
   @ApiParam({ name: 'sessionId' })
   @ApiBody({ type: CloseAppSessionDto })
   @ApiOkResponse({ description: 'RPC result' })
@@ -168,7 +168,7 @@ export class YellowController {
 
   /** Get channels (get_channels). Optional query: participant, status (open | closed | challenged). */
   @Get('channels')
-  @ApiOperation({ summary: 'Get channels (get_channels)' })
+  @ApiOperation({ summary: 'Get channels' })
   @ApiQuery({ name: 'participant', required: false })
   @ApiQuery({
     name: 'status',
@@ -198,7 +198,7 @@ export class YellowController {
   /** Resize channel — add or remove funds without closing. */
   @Post('channels/:channelId/resize')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Resize channel (resize_channel)' })
+  @ApiOperation({ summary: 'Resize channel' })
   @ApiParam({ name: 'channelId', description: 'Channel ID (hex)' })
   @ApiBody({ type: ResizeChannelDto })
   @ApiOkResponse({ description: 'RPC result' })
@@ -222,10 +222,53 @@ export class YellowController {
     });
   }
 
-  /** Transfer (transfer). */
+  /** Request sandbox faucet tokens for an address (sandbox only). */
+  @Post('faucet')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Request sandbox faucet tokens' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { address: { type: 'string', example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2' } },
+      required: ['address'],
+    },
+  })
+  @ApiOkResponse({ description: 'Faucet result' })
+  async faucet(@Body() body: { address: string }): Promise<unknown> {
+    if (!body.address) {
+      throw new BadRequestException('address is required');
+    }
+    const res = await fetch(
+      'https://clearnet-sandbox.yellow.com/faucet/requestTokens',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAddress: body.address }),
+      },
+    );
+    const json = (await res.json()) as Record<string, unknown>;
+    if (!json.success) {
+      throw new BadRequestException(`Faucet failed: ${JSON.stringify(json)}`);
+    }
+    return json;
+  }
+
+  /** Get ledger balances (off-chain unified balance). */
+  @Get('ledger-balances')
+  @ApiOperation({ summary: 'Get ledger balances' })
+  @ApiQuery({ name: 'account', required: false, description: 'Account address (defaults to own)' })
+  @ApiOkResponse({ description: 'Ledger balances' })
+  async getLedgerBalances(
+    @Query('account') account?: string,
+  ): Promise<unknown> {
+    this.ensureYellowReady();
+    return this.yellowClient.getLedgerBalances(account);
+  }
+
+  /** Transfer. */
   @Post('transfer')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Transfer (transfer)' })
+  @ApiOperation({ summary: 'Transfer' })
   @ApiBody({ type: TransferDto })
   @ApiOkResponse({ description: 'RPC result' })
   async transfer(@Body() body: TransferDto): Promise<unknown> {

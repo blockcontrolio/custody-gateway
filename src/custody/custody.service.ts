@@ -5,11 +5,11 @@ import {
   createWalletClient,
   http,
   formatEther,
-  parseUnits,
 } from 'viem';
 import type { Address, Hex, PublicClient, Hash } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { CustodyAbi, Erc20Abi } from '@erc7824/nitrolite';
+import { KeyProvider } from '../key-provider';
 import {
   CUSTODY_ADDRESS,
   ETH_TOKEN,
@@ -20,19 +20,18 @@ import {
 export class CustodyService {
   private readonly logger = new Logger(CustodyService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly keyProvider: KeyProvider,
+  ) {}
 
-  /** Resolve wallet "A" or "B" to private key from env. */
-  resolveWallet(wallet: string): { privateKey: Hex; address: Address } {
-    const key =
-      wallet.toUpperCase() === 'B'
-        ? this.config.get<string>('YELLOW_SIGNER_PRIVATE_KEY_B')
-        : this.config.get<string>('YELLOW_SIGNER_PRIVATE_KEY');
+  /** Resolve an address to its private key via the key provider. */
+  resolveWallet(address: Address): { privateKey: Hex; address: Address } {
+    const key = this.keyProvider.getKey(address);
     if (!key) {
-      throw new BadRequestException(`Private key for wallet ${wallet} not configured`);
+      throw new BadRequestException(`No managed key for address ${address}`);
     }
-    const account = privateKeyToAccount(key as Hex);
-    return { privateKey: key as Hex, address: account.address };
+    return { privateKey: key, address };
   }
 
   /** Resolve RPC URL for a chain (from env or default public). */
@@ -92,12 +91,12 @@ export class CustodyService {
 
   /** Deposit tokens (or ETH) into Custody contract. */
   async deposit(
-    wallet: string,
+    address: Address,
     token: Address,
     amount: string,
     chainName: string,
   ): Promise<{ txHash: Hash; amount: string; token: Address }> {
-    const { privateKey, address } = this.resolveWallet(wallet);
+    const { privateKey } = this.resolveWallet(address);
     const cfg = CHAIN_CONFIG[chainName];
     if (!cfg) {
       throw new BadRequestException(`Unknown chain: ${chainName}`);
@@ -157,12 +156,12 @@ export class CustodyService {
 
   /** Withdraw tokens (or ETH) from Custody contract. */
   async withdraw(
-    wallet: string,
+    address: Address,
     token: Address,
     amount: string,
     chainName: string,
   ): Promise<{ txHash: Hash; amount: string; token: Address }> {
-    const { privateKey } = this.resolveWallet(wallet);
+    const { privateKey } = this.resolveWallet(address);
     const cfg = CHAIN_CONFIG[chainName];
     if (!cfg) {
       throw new BadRequestException(`Unknown chain: ${chainName}`);

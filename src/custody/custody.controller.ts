@@ -35,8 +35,8 @@ export class CustodyController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new managed wallet' })
   @ApiCreatedResponse({ description: 'Newly created wallet address' })
-  createAccount(): { address: string } {
-    const address = this.keyProvider.generateKey();
+  async createAccount(): Promise<{ address: string }> {
+    const address = await this.keyProvider.generateKey();
     return { address };
   }
 

@@ -63,3 +63,24 @@ model ChannelState {
   lastUpdate   DateTime          @default(now())
   createdAt    DateTime          @default(now())
 }
+
+// ─── Account & Key Management ─────────────────────────────
+
+model ManagedWallet {
+  id        String   @id @default(cuid())
+  userId    String
+  address   String   @unique
+  label     String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model ManagedKey {
+  id           String   @id @default(cuid())
+  address      String   @unique
+  encryptedKey String   // AES-256-GCM ciphertext (hex)
+  iv           String   // initialization vector (hex)
+  tag          String   // GCM auth tag (hex)
+  createdAt    DateTime @default(now())
+}

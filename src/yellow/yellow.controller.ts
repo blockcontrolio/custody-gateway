@@ -22,6 +22,7 @@ import {
 import { YellowClientService } from './client/yellow-client.service';
 import { YellowService } from './handler/yellow.service';
 import { YellowAuthService } from './auth/yellow-auth.service';
+import { AccountService } from '../account';
 import type { StoredSession } from './handler/yellow.service';
 import {
   CreateAppSessionDto,
@@ -43,6 +44,7 @@ export class YellowController {
     private readonly yellowClient: YellowClientService,
     private readonly yellowService: YellowService,
     private readonly yellowAuth: YellowAuthService,
+    private readonly accountService: AccountService,
   ) {}
 
   private ensureYellowReady(): void {
@@ -234,9 +236,12 @@ export class YellowController {
     },
   })
   @ApiOkResponse({ description: 'Faucet result' })
-  async faucet(@Body() body: { address: string }): Promise<unknown> {
+  async faucet(@Body() body: { address?: string; userId?: string }): Promise<unknown> {
+    if (body.userId && !body.address) {
+      body.address = await this.accountService.resolveAddress(body.userId);
+    }
     if (!body.address) {
-      throw new BadRequestException('address is required');
+      throw new BadRequestException('address or userId is required');
     }
     const res = await fetch(
       'https://clearnet-sandbox.yellow.com/faucet/requestTokens',
@@ -253,32 +258,42 @@ export class YellowController {
     return json;
   }
 
-  /** Get ledger balances (off-chain unified balance). */
+  /** Get ledger balances (off-chain unified balance). Accepts userId or account address. */
   @Get('ledger-balances')
   @ApiOperation({ summary: 'Get ledger balances' })
   @ApiQuery({ name: 'account', required: false, description: 'Account address (defaults to own)' })
+  @ApiQuery({ name: 'userId', required: false, description: 'Resolve userId to account address' })
   @ApiOkResponse({ description: 'Ledger balances' })
   async getLedgerBalances(
     @Query('account') account?: string,
+    @Query('userId') userId?: string,
   ): Promise<unknown> {
     this.ensureYellowReady();
+    if (userId && !account) {
+      account = await this.accountService.resolveAddress(userId);
+    }
     return this.yellowClient.getLedgerBalances(account);
   }
 
-  /** Transfer. */
+  /** Transfer. Accepts userId / destinationUserId as alternatives to addresses. */
   @Post('transfer')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Transfer' })
   @ApiBody({ type: TransferDto })
   @ApiOkResponse({ description: 'RPC result' })
-  async transfer(@Body() body: TransferDto): Promise<unknown> {
+  async transfer(@Body() body: TransferDto & { userId?: string; destinationUserId?: string }): Promise<unknown> {
     this.ensureYellowReady();
     if (!body.allocations || !Array.isArray(body.allocations)) {
       throw new BadRequestException('Body must include allocations');
     }
+
+    // Resolve userId → destination address
+    if (body.destinationUserId && !body.destination) {
+      body.destination = await this.accountService.resolveAddress(body.destinationUserId);
+    }
     if (!body.destination && !body.destination_user_tag) {
       throw new BadRequestException(
-        'Either destination (address) or destination_user_tag is required',
+        'Either destination, destinationUserId, or destination_user_tag is required',
       );
     }
     return this.yellowClient.transfer(

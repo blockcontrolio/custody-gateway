@@ -4,6 +4,7 @@ import { ClearNodeService } from '../clear-node/clear-node.service';
 import { YellowAuthService } from '../yellow/auth/yellow-auth.service';
 import { YellowService } from '../yellow/handler/yellow.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { Public } from '../auth';
 import type {
   AuthState,
   ConnectionState,
@@ -14,6 +15,7 @@ import { HealthResponseDto } from './health.dto';
 
 @ApiTags('Health')
 @Controller()
+@Public()
 export class HealthController {
   private readonly startTime = Date.now();
 

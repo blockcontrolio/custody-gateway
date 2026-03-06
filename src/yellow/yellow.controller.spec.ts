@@ -4,6 +4,7 @@ import { YellowController } from './yellow.controller';
 import { YellowClientService } from './client/yellow-client.service';
 import { YellowService } from './handler/yellow.service';
 import { YellowAuthService } from './auth/yellow-auth.service';
+import { AccountService } from '../account';
 
 describe('YellowController', () => {
   let controller: YellowController;
@@ -45,6 +46,10 @@ describe('YellowController', () => {
         {
           provide: YellowAuthService,
           useValue: { getSessionToken: jest.fn().mockReturnValue(null) },
+        },
+        {
+          provide: AccountService,
+          useValue: { resolveAddress: jest.fn().mockResolvedValue('0x1234') },
         },
       ],
     }).compile();

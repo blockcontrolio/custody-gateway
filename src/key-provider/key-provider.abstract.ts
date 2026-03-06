@@ -11,7 +11,7 @@ export abstract class KeyProvider {
   abstract listAddresses(): Address[];
 
   /** Generate a new key pair, store it, return the address. */
-  abstract generateKey(): Address;
+  abstract generateKey(): Address | Promise<Address>;
 
   /** Check if an address is managed by this provider. */
   hasAddress(address: Address): boolean {

@@ -3,11 +3,12 @@ import { YellowClientService } from './yellow-client.service';
 import { YellowService } from '../handler/yellow.service';
 import { ClearNodeService } from '../../clear-node/clear-node.service';
 import { KeyProviderService } from '../providers/key-provider.service';
+import { KeyProvider } from '../../key-provider';
 import { RequestIdService } from '../providers/request-id.service';
 
 describe('YellowClientService', () => {
   let keyProvider: jest.Mocked<
-    Pick<KeyProviderService, 'isConfigured' | 'createSigner'>
+    Pick<KeyProviderService, 'isConfigured' | 'createSigner' | 'createSignerForAddress'>
   >;
   let yellowService: jest.Mocked<
     Pick<
@@ -19,12 +20,14 @@ describe('YellowClientService', () => {
     >
   >;
   let clearNodeService: jest.Mocked<Pick<ClearNodeService, 'sendRaw'>>;
+  let globalKeyProvider: jest.Mocked<Pick<KeyProvider, 'getKey' | 'listAddresses'>>;
   let service: YellowClientService;
 
   beforeEach(() => {
     keyProvider = {
       isConfigured: jest.fn().mockReturnValue(true),
       createSigner: jest.fn().mockReturnValue(null),
+      createSignerForAddress: jest.fn().mockReturnValue(null),
     };
     yellowService = {
       isEnabled: jest.fn().mockReturnValue(true),
@@ -33,11 +36,16 @@ describe('YellowClientService', () => {
       persistSignedState: jest.fn().mockResolvedValue(undefined),
     };
     clearNodeService = { sendRaw: jest.fn() };
+    globalKeyProvider = {
+      getKey: jest.fn().mockReturnValue(null),
+      listAddresses: jest.fn().mockReturnValue([]),
+    };
     service = new YellowClientService(
       clearNodeService,
       yellowService,
       keyProvider,
       new RequestIdService(),
+      globalKeyProvider as unknown as KeyProvider,
     );
   });
 
@@ -62,6 +70,7 @@ describe('YellowClientService', () => {
             weights: [1],
             quorum: 1,
             challenge: 3600,
+            application: 'custody-gateway',
           },
           allocations: [],
         }),

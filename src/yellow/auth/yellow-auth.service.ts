@@ -17,7 +17,7 @@ import type {
   PartialEIP712AuthMessage,
   EIP712AuthDomain,
 } from '@erc7824/nitrolite';
-import { privateKeyToAccount } from 'viem/accounts';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Hex, WalletClient } from 'viem';
 import { ClearNodeService } from '../../clear-node/clear-node.service';
 import { YellowService } from '../handler/yellow.service';
@@ -86,9 +86,13 @@ export class YellowAuthService {
       );
       const expiresAt = BigInt(Math.floor(Date.now() / 1000) + expireSec);
 
+      // Generate a fresh session key each time to avoid "session key already exists" errors
+      const sessionKeyPrivate = generatePrivateKey();
+      const sessionKeyAddress = privateKeyToAccount(sessionKeyPrivate).address;
+
       const authParams: AuthRequestParams = {
         address,
-        session_key: address,
+        session_key: sessionKeyAddress,
         application:
           this.configService.get<string>('YELLOW_AUTH_APP_NAME') ||
           'custody-gateway',

@@ -7,14 +7,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SessionRepository } from '../../repository/session.repository';
-import type { StoredSession } from '../../repository/session.repository';
+import type { StoredSession, SessionMetadata } from '../../repository/session.repository';
 import { ChannelRepository } from '../../repository/channel.repository';
 import { SignedStateRepository } from '../../repository/signed-state.repository';
 import type { PersistSignedStateData } from '../yellow.types';
 import { errorMessage } from '../yellow.utils';
 import type { ParsedMessage } from '../yellow.types';
 
-export type { StoredSession } from '../../repository/session.repository';
+export type { StoredSession, SessionMetadata } from '../../repository/session.repository';
 
 /** Coerce to string only when value is string or number; avoid '[object Object]'. */
 function safeString(value: unknown): string {
@@ -199,13 +199,39 @@ export class YellowService implements OnModuleDestroy {
     }
   }
 
-  async onSessionCreated(sessionId: string): Promise<void> {
+  async onSessionCreated(
+    sessionId: string,
+    metadata?: SessionMetadata,
+  ): Promise<void> {
     const now = Date.now();
-    const session: StoredSession = { sessionId, createdAt: now };
+    const session: StoredSession = {
+      sessionId,
+      createdAt: now,
+      status: 'active',
+      participants: metadata?.participants,
+      allocations: metadata?.allocations,
+    };
     this.sessions.set(sessionId, session);
     this.logger.log(`[Yellow] session_created: ${sessionId}`);
     if (this.sessionRepo) {
-      await this.sessionRepo.upsertActive(sessionId);
+      await this.sessionRepo.upsertActive(sessionId, metadata);
+    }
+  }
+
+  async updateSessionAllocations(
+    sessionId: string,
+    allocations: Array<{ asset: string; amount: string; participant: string }>,
+  ): Promise<void> {
+    const cached = this.sessions.get(sessionId);
+    if (cached) {
+      cached.allocations = allocations;
+    }
+    if (this.sessionRepo) {
+      const existing = await this.sessionRepo.findSession(sessionId);
+      await this.sessionRepo.updateMetadata(sessionId, {
+        participants: existing?.participants,
+        allocations,
+      });
     }
   }
 
@@ -221,7 +247,7 @@ export class YellowService implements OnModuleDestroy {
     const cached = this.sessions.get(sessionId);
     if (cached) return cached;
     if (this.sessionRepo) {
-      const session = await this.sessionRepo.findActive(sessionId);
+      const session = await this.sessionRepo.findSession(sessionId);
       if (session) {
         this.sessions.set(sessionId, session);
         return session;

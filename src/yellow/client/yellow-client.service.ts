@@ -17,7 +17,7 @@ import type {
   TransferRequestParams,
 } from '@erc7824/nitrolite';
 import { RPCChannelStatus } from '@erc7824/nitrolite';
-import type { Hex } from 'viem';
+import type { Address, Hex } from 'viem';
 import { ClearNodeService } from '../../clear-node/clear-node.service';
 import { YellowService } from '../handler/yellow.service';
 import type { PersistSignedStateData } from '../yellow.types';
@@ -45,7 +45,7 @@ export class YellowClientService {
     @Inject(KeyProviderService)
     private readonly keyProvider: Pick<
       KeyProviderService,
-      'isConfigured' | 'createSigner'
+      'isConfigured' | 'createSigner' | 'createSignerForAddress'
     >,
     private readonly requestIdService: RequestIdService,
     @Inject(KeyProvider)
@@ -57,7 +57,10 @@ export class YellowClientService {
     return this.keyProvider.isConfigured();
   }
 
-  private getSigner(): MessageSigner | null {
+  private getSigner(address?: string): MessageSigner | null {
+    if (address) {
+      return this.keyProvider.createSignerForAddress(address as Address);
+    }
     return this.keyProvider.createSigner();
   }
 
@@ -65,11 +68,14 @@ export class YellowClientService {
   private sendRequest<T>(
     requestId: number,
     buildMessage: (signer: MessageSigner) => Promise<string>,
+    signerAddress?: string,
   ): Promise<T> {
-    const signer = this.getSigner();
+    const signer = this.getSigner(signerAddress);
     if (!signer) {
       return Promise.reject(
-        new Error('YELLOW_SIGNER_PRIVATE_KEY not set or invalid'),
+        signerAddress
+          ? new Error(`No managed key found for address ${signerAddress}`)
+          : new Error('YELLOW_SIGNER_PRIVATE_KEY not set or invalid'),
       );
     }
 
@@ -111,10 +117,11 @@ export class YellowClientService {
   private rpc<T>(
     methodName: string,
     build: (signer: MessageSigner, requestId: number) => Promise<string>,
+    signerAddress?: string,
   ): Promise<T> {
     const requestId = this.requestIdService.nextId();
     this.logger.debug(`${methodName} requestId=${requestId}`);
-    return this.sendRequest<T>(requestId, (s) => build(s, requestId));
+    return this.sendRequest<T>(requestId, (s) => build(s, requestId), signerAddress);
   }
 
   async createAppSession(
@@ -124,7 +131,7 @@ export class YellowClientService {
     return this.rpc('create_app_session', async (s, id) => {
       const msg = await createAppSessionMessage(s, params, id);
       if (participants.length > 1) {
-        return this.addCoSignatures(msg, participants);
+        return this.addCoSignatures(msg, participants, 'create_app_session');
       }
       return msg;
     });
@@ -137,6 +144,7 @@ export class YellowClientService {
   private async addCoSignatures(
     msg: string,
     participants: Hex[],
+    methodName?: string,
   ): Promise<string> {
     const parsed = JSON.parse(msg) as { req: unknown; sig: Hex[] };
     if (!parsed.req || !Array.isArray(parsed.sig)) return msg;
@@ -153,7 +161,7 @@ export class YellowClientService {
 
     if (sigs.length > 1) {
       this.logger.debug(
-        `Co-signed create_app_session for ${sigs.length}/${participants.length} participants`,
+        `Co-signed ${methodName ?? 'message'} for ${sigs.length}/${participants.length} participants`,
       );
       parsed.sig = sigs;
       return JSON.stringify(parsed);
@@ -166,21 +174,39 @@ export class YellowClientService {
     allocations: Array<{ asset: string; amount: string; participant: Hex }>;
     session_data?: string;
   }): Promise<unknown> {
-    return this.rpc('submit_app_state', (s, id) =>
-      createSubmitAppStateMessage(
+    const participants = [
+      ...new Set(params.allocations.map((a) => a.participant)),
+    ] as Hex[];
+    return this.rpc('submit_app_state', async (s, id) => {
+      const msg = await createSubmitAppStateMessage(
         s,
         params as Parameters<typeof createSubmitAppStateMessage>[1],
         id,
-      ),
-    );
+      );
+      if (participants.length > 1) {
+        return this.addCoSignatures(msg, participants, 'submit_app_state');
+      }
+      return msg;
+    });
   }
 
   async closeAppSession(
     params: CloseAppSessionRequestParams,
   ): Promise<unknown> {
-    return this.rpc('close_app_session', (s, id) =>
-      createCloseAppSessionMessage(s, params, id),
-    );
+    const participants = [
+      ...new Set(
+        ((params as { allocations?: Array<{ participant: string }> }).allocations ?? []).map(
+          (a) => a.participant,
+        ),
+      ),
+    ] as Hex[];
+    return this.rpc('close_app_session', async (s, id) => {
+      const msg = await createCloseAppSessionMessage(s, params, id);
+      if (participants.length > 1) {
+        return this.addCoSignatures(msg, participants, 'close_app_session');
+      }
+      return msg;
+    });
   }
 
   async getChannels(
@@ -203,7 +229,7 @@ export class YellowClientService {
   async getLedgerBalances(accountId?: string): Promise<unknown> {
     return this.rpc('get_ledger_balances', (s, id) =>
       createGetLedgerBalancesMessage(s, accountId, id),
-    );
+    accountId);
   }
 
   async transfer(params: TransferRequestParams): Promise<unknown> {

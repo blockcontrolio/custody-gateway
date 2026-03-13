@@ -37,4 +37,11 @@ export class KeyProviderService {
     if (!key) return null;
     return createECDSAMessageSigner(key);
   }
+
+  /** Create a signer for a specific managed address. Returns null if not managed. */
+  createSignerForAddress(address: Address): MessageSigner | null {
+    const key = this.keyProvider.getKey(address);
+    if (!key) return null;
+    return createECDSAMessageSigner(key);
+  }
 }

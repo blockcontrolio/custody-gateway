@@ -23,21 +23,3 @@ export type ParsedMessage =
 
 /** Session status (matches prisma YellowSessionStatus). */
 export type YellowSessionStatus = 'active' | 'closed';
-
-/** Channel status (matches prisma ChannelStateStatus). */
-export type ChannelStateStatus = 'active' | 'closed' | 'challenged';
-
-/** Signed state intent (matches prisma SignedStateIntent). */
-export type SignedStateIntent = 'OPERATE' | 'INITIALIZE' | 'RESIZE' | 'FINALIZE';
-
-/** Data for persistSignedState (dispute resolution). */
-export interface PersistSignedStateData {
-  channelId: string;
-  sessionId?: string;
-  stateVersion: number;
-  intent: string;
-  stateData: unknown;
-  allocations: unknown;
-  signatures: unknown;
-  rawMessage: string;
-}

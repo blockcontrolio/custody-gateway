@@ -2,9 +2,6 @@ import { Injectable, Logger, OnModuleDestroy, Optional, Inject } from '@nestjs/c
 import { ConfigService } from '@nestjs/config';
 import { SessionRepository } from '../../repository/session.repository.js';
 import type { StoredSession, SessionMetadata } from '../../repository/session.repository.js';
-import { ChannelRepository } from '../../repository/channel.repository.js';
-import { SignedStateRepository } from '../../repository/signed-state.repository.js';
-import type { PersistSignedStateData } from '../yellow.types.js';
 import { errorMessage } from '../yellow.utils.js';
 import type { ParsedMessage } from '../yellow.types.js';
 
@@ -31,12 +28,6 @@ export class YellowService implements OnModuleDestroy {
     @Optional()
     @Inject(SessionRepository)
     private readonly sessionRepo?: SessionRepository,
-    @Optional()
-    @Inject(ChannelRepository)
-    private readonly channelRepo?: ChannelRepository,
-    @Optional()
-    @Inject(SignedStateRepository)
-    private readonly signedStateRepo?: SignedStateRepository,
   ) {}
 
   isEnabled(): boolean {
@@ -265,17 +256,6 @@ export class YellowService implements OnModuleDestroy {
 
   onChannelUpdate(payload: unknown): void {
     this.logger.debug(`[Yellow] channel_update (cu): ${JSON.stringify(payload)}`);
-    if (this.channelRepo) {
-      this.channelRepo
-        .upsertFromPayload(payload)
-        .catch((err) => this.logger.warn(`Failed to persist channel update: ${errorMessage(err)}`));
-    }
-  }
-
-  async persistSignedState(data: PersistSignedStateData): Promise<void> {
-    if (this.signedStateRepo) {
-      await this.signedStateRepo.create(data);
-    }
   }
 
   onTransfer(payload: unknown): void {

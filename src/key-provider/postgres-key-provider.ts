@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { KeyRepository } from '../repository/key.repository.js';
 import { KeyProvider } from './key-provider.abstract.js';
 
 const ALGO = 'aes-256-gcm';
@@ -22,7 +22,7 @@ export class PostgresKeyProvider extends KeyProvider implements OnModuleInit {
   private readonly masterKey: Buffer;
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly keyRepo: KeyRepository,
     private readonly config: ConfigService,
   ) {
     super();
@@ -91,15 +91,11 @@ export class PostgresKeyProvider extends KeyProvider implements OnModuleInit {
 
   private async persistKey(address: string, privateKey: Hex): Promise<void> {
     const { encrypted, iv, tag } = this.encrypt(privateKey);
-    await this.prisma.managedKey.upsert({
-      where: { address },
-      update: { encryptedKey: encrypted, iv, tag },
-      create: { address, encryptedKey: encrypted, iv, tag },
-    });
+    await this.keyRepo.upsert(address, encrypted, iv, tag);
   }
 
   private async loadAllFromDb(): Promise<void> {
-    const rows = await this.prisma.managedKey.findMany();
+    const rows = await this.keyRepo.findAll();
     for (const row of rows) {
       try {
         const privateKey = this.decrypt(row.encryptedKey, row.iv, row.tag) as Hex;

@@ -6,18 +6,13 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "db:up": "docker compose up -d",
     "db:migrate": "prisma migrate dev",
-    "lint": "eslint \"{src,test}/**/*.ts\" --fix",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "lint": "eslint \"src/**/*.ts\" --fix"
   },
   "dependencies": {
     "@erc7824/nitrolite": "^0.5.3",

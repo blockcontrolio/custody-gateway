@@ -258,25 +258,32 @@ export class SessionService {
     return { sessionId, status: 'closed', allocations, withdrawals };
   }
 
-  // ─── Recovery ──────────────────────────────────────────
+  // ─── Faucet (sandbox only) ───────────────────────────
 
-  async recoverFunds(address: string, asset: string, chainName = DEFAULT_CHAIN) {
-    const tokenAddress = resolveTokenAddress(asset, chainName);
-    if (!tokenAddress) throw new BadRequestException(`Unknown token ${asset}`);
+  async faucet(userId: string, chainName = DEFAULT_CHAIN) {
+    const address = await this.accountService.resolveAddress(userId);
 
-    const bal = await this.custodyService.getCustodyBalance(
-      address as Address,
-      tokenAddress,
+    // 1. Request test tokens from ClearNode sandbox faucet → Unified Balance
+    const resp = await fetch('https://clearnet-sandbox.yellow.com/faucet/requestTokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userAddress: address }),
+    });
+    if (!resp.ok) throw new BadRequestException(`Faucet request failed: ${resp.statusText}`);
+    const faucetResult = await resp.json() as { amount?: string; asset?: string };
+
+    // 2. Withdraw from ledger to on-chain wallet
+    this.ensureReady();
+    const amount = faucetResult.amount ?? '10000000';
+    const asset = faucetResult.asset ?? 'ytest.usd';
+
+    const { txHash } = await this.channelFunding.withdrawToWallet(
+      address,
+      asset,
+      amount,
       chainName,
     );
-    if (BigInt(bal.balance) === 0n) return { withdrawn: '0' };
 
-    const tx = await this.custodyService.withdraw(
-      address as Address,
-      tokenAddress,
-      bal.balance,
-      chainName,
-    );
-    return { withdrawn: bal.balance, txHash: tx.txHash };
+    return { address, asset, amount, txHash };
   }
 }

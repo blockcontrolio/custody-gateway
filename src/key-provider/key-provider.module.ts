@@ -3,21 +3,21 @@ import { ConfigService } from '@nestjs/config';
 import { KeyProvider } from './key-provider.abstract.js';
 import { InMemoryKeyProvider } from './in-memory-key-provider.js';
 import { PostgresKeyProvider } from './postgres-key-provider.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { KeyRepository } from '../repository/key.repository.js';
 
 @Global()
 @Module({
   providers: [
     {
       provide: KeyProvider,
-      useFactory: (config: ConfigService, prisma: PrismaService) => {
+      useFactory: (config: ConfigService, keyRepo: KeyRepository) => {
         const masterKey = config.get<string>('KEY_ENCRYPTION_MASTER_KEY');
         if (masterKey && masterKey.length === 64) {
-          return new PostgresKeyProvider(prisma, config);
+          return new PostgresKeyProvider(keyRepo, config);
         }
         return new InMemoryKeyProvider(config);
       },
-      inject: [ConfigService, PrismaService],
+      inject: [ConfigService, KeyRepository],
     },
   ],
   exports: [KeyProvider],

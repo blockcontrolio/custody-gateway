@@ -21,7 +21,6 @@ import type {
 import type { Address, Hex } from 'viem';
 import { ClearNodeService } from '../../clear-node/clear-node.service.js';
 import { YellowService } from '../handler/yellow.service.js';
-import type { PersistSignedStateData } from '../yellow.types.js';
 import { KeyProviderService } from '../providers/key-provider.service.js';
 import { KeyProvider } from '../../key-provider/index.js';
 import { RequestIdService } from '../providers/request-id.service.js';
@@ -38,7 +37,7 @@ export class YellowClientService {
     @Inject(YellowService)
     private readonly yellowService: Pick<
       YellowService,
-      'isEnabled' | 'registerPendingResponse' | 'deletePendingResponse' | 'persistSignedState'
+      'isEnabled' | 'registerPendingResponse' | 'deletePendingResponse'
     >,
     @Inject(KeyProviderService)
     private readonly keyProvider: Pick<
@@ -92,10 +91,7 @@ export class YellowClientService {
       this.yellowService.registerPendingResponse(requestId, (result, method) => {
         clearTimeout(timeout);
         if (method === 'error') reject(new Error(String(result)));
-        else {
-          this.tryPersistSignedState(result, method);
-          resolve(result as T);
-        }
+        else resolve(result as T);
       });
 
       buildMessage(signer)
@@ -272,59 +268,4 @@ export class YellowClientService {
       signerAddress,
     );
   }
-
-  /**
-   * Persist signed state for dispute resolution when response contains
-   * channelId, signatures, and state data (submit_app_state, close_app_session).
-   */
-  private tryPersistSignedState(result: unknown, method?: string): void {
-    if (method !== 'submit_app_state' && method !== 'close_app_session') {
-      return;
-    }
-    const r = result as Record<string, unknown>;
-    const channelId = field<string>(r, 'channelId', 'channel_id');
-    const signatures = r?.signatures ?? r?.sigs;
-    if (!channelId || !Array.isArray(signatures) || signatures.length === 0) {
-      return;
-    }
-
-    const intent = r?.intent;
-    const data: PersistSignedStateData = {
-      channelId,
-      sessionId: field<string>(r, 'sessionId', 'app_session_id'),
-      stateVersion:
-        typeof r?.stateVersion === 'number' ? r.stateVersion : ((r?.version as number) ?? 0),
-      intent:
-        typeof intent === 'string'
-          ? intent
-          : typeof intent === 'number'
-            ? String(intent)
-            : 'OPERATE',
-      stateData: r?.stateData ?? r?.state ?? {},
-      allocations: r?.allocations ?? [],
-      signatures,
-      rawMessage: typeof r?.rawMessage === 'string' ? r.rawMessage : JSON.stringify(result),
-    };
-    void this.yellowService.persistSignedState(data);
-  }
-}
-
-/**
- * Extract a string field from an RPC result, trying camelCase then snake_case key.
- * ClearNode responses are inconsistent in naming convention.
- */
-function field<T = string>(
-  obj: Record<string, unknown> | undefined,
-  camelKey: string,
-  snakeKey: string,
-): T | undefined {
-  const camel = obj?.[camelKey];
-  if (camel != null && (typeof camel === 'string' || typeof camel === 'number')) {
-    return camel as T;
-  }
-  const snake = obj?.[snakeKey];
-  if (snake != null && (typeof snake === 'string' || typeof snake === 'number')) {
-    return snake as T;
-  }
-  return undefined;
 }

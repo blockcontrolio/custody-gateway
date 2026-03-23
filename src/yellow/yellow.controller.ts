@@ -23,7 +23,6 @@ import type { StoredSession } from './handler/yellow.service.js';
 import {
   SubmitAppStateDto,
   CloseAppSessionDto,
-  StoredSessionDto,
   CreateInvitationDto,
 } from './dto/index.js';
 
@@ -70,20 +69,28 @@ export class YellowController {
     return this.sessionService.rejectInvitation(id);
   }
 
-  // ─── Recovery ──────────────────────────────────────────
+  // ─── Faucet (sandbox) ────────────────────────────────
 
-  @Post('recover-funds')
+  @Post('faucet')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Withdraw stuck funds from Custody contract back to wallet' })
-  async recoverFunds(@Body() body: { address: string; asset: string; chainName?: string }) {
-    return this.sessionService.recoverFunds(body.address, body.asset, body.chainName);
+  @ApiOperation({ summary: 'Request test tokens and withdraw on-chain (sandbox only, needs Sepolia ETH for gas)' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['userId'],
+      properties: { userId: { type: 'string', format: 'uuid' } },
+    },
+  })
+  @ApiOkResponse({ description: 'Tokens withdrawn on-chain' })
+  async faucet(@Body() body: { userId: string }) {
+    if (!body.userId) throw new BadRequestException('userId is required');
+    return this.sessionService.faucet(body.userId);
   }
 
   // ─── Sessions ──────────────────────────────────────────
 
   @Get()
   @ApiOperation({ summary: 'List all sessions' })
-  @ApiOkResponse({ type: [StoredSessionDto] })
   async list(): Promise<StoredSession[]> {
     return this.sessionService.listSessions();
   }
@@ -91,7 +98,6 @@ export class YellowController {
   @Get(':sessionId')
   @ApiOperation({ summary: 'Get session by ID (with current state)' })
   @ApiParam({ name: 'sessionId' })
-  @ApiOkResponse({ type: StoredSessionDto })
   async get(@Param('sessionId') sessionId: string): Promise<StoredSession | null> {
     return this.sessionService.getSession(sessionId);
   }

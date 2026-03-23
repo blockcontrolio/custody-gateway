@@ -9,7 +9,7 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { AccountService } from './account.service.js';
-import type { AccountInfo, WalletInfo } from './account.service.js';
+import type { AccountInfo } from './account.service.js';
 
 @ApiTags('Users')
 @Controller('users')
@@ -25,8 +25,8 @@ export class UserController {
       properties: { label: { type: 'string', example: 'Alice', nullable: true } },
     },
   })
-  @ApiCreatedResponse({ description: 'User with userId and wallet address' })
-  async create(@Body() body: { label?: string }): Promise<{ userId: string; wallet: WalletInfo }> {
+  @ApiCreatedResponse({ description: 'User with userId and walletAddress' })
+  async create(@Body() body: { label?: string }): Promise<AccountInfo> {
     return this.accountService.createAccount(body.label);
   }
 

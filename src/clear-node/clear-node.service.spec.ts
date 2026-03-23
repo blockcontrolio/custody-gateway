@@ -30,15 +30,9 @@ jest.mock('ws', () => ({
 }));
 
 describe('ClearNodeService', () => {
-  let yellowParserService: jest.Mocked<
-    Pick<YellowParserService, 'parse' | 'parseAndVerify'>
-  >;
-  let yellowService: jest.Mocked<
-    Pick<YellowService, 'isEnabled' | 'handleMessage'>
-  >;
-  let yellowAuthService: jest.Mocked<
-    Pick<YellowAuthService, 'isConfigured' | 'startAuth'>
-  >;
+  let yellowParserService: jest.Mocked<Pick<YellowParserService, 'parse' | 'parseAndVerify'>>;
+  let yellowService: jest.Mocked<Pick<YellowService, 'isEnabled' | 'handleMessage'>>;
+  let yellowAuthService: jest.Mocked<Pick<YellowAuthService, 'isConfigured' | 'startAuth'>>;
   let service: ClearNodeService;
 
   beforeEach(() => {
@@ -124,8 +118,6 @@ describe('ClearNodeService', () => {
       throw new Error('Handler error');
     });
 
-    expect(() =>
-      mockWs.onmessage!({ data: '{"type":"payment"}' }),
-    ).not.toThrow();
+    expect(() => mockWs.onmessage!({ data: '{"type":"payment"}' })).not.toThrow();
   });
 });

@@ -43,8 +43,7 @@ export class ChannelRepository {
           ? p.chain_id
           : null;
     const token = p?.token != null ? safeString(p.token) : null;
-    const balance =
-      p?.amount != null || p?.balance != null ? (p.balance ?? p.amount) : null;
+    const balance = p?.amount != null || p?.balance != null ? (p.balance ?? p.amount) : null;
 
     const participantsJson = participants as Prisma.InputJsonValue;
     const balanceJson = balance as Prisma.InputJsonValue | null;
@@ -70,9 +69,7 @@ export class ChannelRepository {
         },
       });
     } catch (err) {
-      this.logger.warn(
-        `Failed to persist channel ${channelId}: ${errorMessage(err)}`,
-      );
+      this.logger.warn(`Failed to persist channel ${channelId}: ${errorMessage(err)}`);
     }
   }
 }

@@ -36,12 +36,7 @@ export class YellowParserService {
           number?,
         ];
         this.warnIfTimestampDrifted(timestamp);
-        if (
-          method === 'error' &&
-          result &&
-          typeof result === 'object' &&
-          'error' in result
-        ) {
+        if (method === 'error' && result && typeof result === 'object' && 'error' in result) {
           return {
             kind: 'error',
             requestId,
@@ -88,9 +83,7 @@ export class YellowParserService {
       // Fallback: treat as unknown for debugging
       return { kind: 'unknown', raw: data };
     } catch {
-      this.logger.debug(
-        `Failed to parse message as JSON: ${raw.slice(0, 200)}`,
-      );
+      this.logger.debug(`Failed to parse message as JSON: ${raw.slice(0, 200)}`);
       return null;
     }
   }
@@ -99,10 +92,7 @@ export class YellowParserService {
    * Parse and optionally verify the ECDSA signature on the message.
    * If expectedAddress is provided and signature is invalid, returns kind='unknown'.
    */
-  async parseAndVerify(
-    raw: string,
-    expectedAddress?: string,
-  ): Promise<ParsedMessage | null> {
+  async parseAndVerify(raw: string, expectedAddress?: string): Promise<ParsedMessage | null> {
     const parsed = this.parse(raw);
     if (!parsed || !expectedAddress) {
       return parsed;
@@ -149,14 +139,11 @@ export class YellowParserService {
   private warnIfTimestampDrifted(timestamp?: number): void {
     if (timestamp == null) return;
     const maxDrift = Number(
-      this.configService.get<string>('TIMESTAMP_MAX_DRIFT_MS') ||
-        DEFAULT_MAX_DRIFT_MS,
+      this.configService.get<string>('TIMESTAMP_MAX_DRIFT_MS') || DEFAULT_MAX_DRIFT_MS,
     );
     const drift = Math.abs(timestamp - Date.now());
     if (drift > maxDrift) {
-      this.logger.warn(
-        `Timestamp drift detected: ${drift}ms (max ${maxDrift}ms)`,
-      );
+      this.logger.warn(`Timestamp drift detected: ${drift}ms (max ${maxDrift}ms)`);
     }
   }
 }

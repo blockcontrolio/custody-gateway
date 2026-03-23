@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  Optional,
-  Inject,
-  forwardRef,
-} from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   createAuthRequestMessage,
@@ -40,27 +34,19 @@ export class YellowAuthService {
   private authQueue: Promise<void> = Promise.resolve();
 
   /** Single-slot callback used during an auth flow (serialized via authQueue). */
-  private pendingAuthResolve:
-    | ((result: unknown, method?: string) => void)
-    | null = null;
+  private pendingAuthResolve: ((result: unknown, method?: string) => void) | null = null;
 
   constructor(
     @Optional()
     @Inject(forwardRef(() => ClearNodeService))
     private readonly clearNodeService: ClearNodeService | null,
     @Inject(YellowService)
-    private readonly yellowService: Pick<
-      YellowService,
-      'registerPendingResponse'
-    >,
+    private readonly yellowService: Pick<YellowService, 'registerPendingResponse'>,
     @Inject(ConfigService)
     private readonly configService: Pick<ConfigService, 'get'>,
     private readonly requestIdService: RequestIdService,
     @Inject(KeyProviderService)
-    private readonly keyProvider: Pick<
-      KeyProviderService,
-      'isConfigured' | 'getSignerKey'
-    >,
+    private readonly keyProvider: Pick<KeyProviderService, 'isConfigured' | 'getSignerKey'>,
   ) {}
 
   // ─── Public API ────────────────────────────────────────
@@ -108,9 +94,7 @@ export class YellowAuthService {
    */
   async startAuth(): Promise<void> {
     if (!this.isConfigured()) {
-      this.logger.debug(
-        'YELLOW_SIGNER_PRIVATE_KEY not set or invalid; skipping auth',
-      );
+      this.logger.debug('YELLOW_SIGNER_PRIVATE_KEY not set or invalid; skipping auth');
       return;
     }
     if (!this.clearNodeService) {
@@ -156,9 +140,7 @@ export class YellowAuthService {
     }
 
     const requestId = this.requestIdService.nextId();
-    const expireSec = Number(
-      this.configService.get<string>('YELLOW_AUTH_EXPIRE_SEC') || '86400',
-    );
+    const expireSec = Number(this.configService.get<string>('YELLOW_AUTH_EXPIRE_SEC') || '86400');
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + expireSec);
 
     // Fresh session key each time (avoids "session key already exists")
@@ -171,15 +153,10 @@ export class YellowAuthService {
       application: 'clearnode', // root access — bypasses allowance checks
       allowances: [],
       expires_at: expiresAt,
-      scope:
-        this.configService.get<string>('YELLOW_AUTH_SCOPE') || 'console',
+      scope: this.configService.get<string>('YELLOW_AUTH_SCOPE') || 'console',
     };
 
-    const authRequestStr = await createAuthRequestMessage(
-      authParams,
-      requestId,
-      Date.now(),
-    );
+    const authRequestStr = await createAuthRequestMessage(authParams, requestId, Date.now());
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -212,10 +189,7 @@ export class YellowAuthService {
         reject(new Error(`Unexpected auth response method: ${method}`));
       };
 
-      this.yellowService.registerPendingResponse(
-        requestId,
-        this.pendingAuthResolve,
-      );
+      this.yellowService.registerPendingResponse(requestId, this.pendingAuthResolve);
       this.clearNodeService!.sendRaw(authRequestStr);
     });
   }
@@ -227,8 +201,7 @@ export class YellowAuthService {
     resolve: () => void,
     reject: (err: Error) => void,
   ): Promise<void> {
-    const challengeMessage =
-      result.challengeMessage ?? result.challenge_message;
+    const challengeMessage = result.challengeMessage ?? result.challenge_message;
     if (!challengeMessage) {
       reject(new Error('Missing challengeMessage in auth_challenge'));
       return;
@@ -250,11 +223,7 @@ export class YellowAuthService {
         signTypedData: (args: Parameters<typeof account.signTypedData>[0]) =>
           account.signTypedData(args),
       } as unknown as WalletClient;
-      const eip712Signer = createEIP712AuthMessageSigner(
-        walletLikeClient,
-        partialMessage,
-        domain,
-      );
+      const eip712Signer = createEIP712AuthMessageSigner(walletLikeClient, partialMessage, domain);
 
       const challengeResponse: AuthChallengeResponse = {
         method: 'auth_challenge' as AuthChallengeResponse['method'],
@@ -288,9 +257,7 @@ export class YellowAuthService {
           if (token) {
             this.sessionTokens.set(account.address.toLowerCase(), token);
             this.authedKeys.set(account.address.toLowerCase(), privateKey);
-            this.logger.log(
-              `Yellow auth success for ${account.address}; JWT stored`,
-            );
+            this.logger.log(`Yellow auth success for ${account.address}; JWT stored`);
             resolve();
           } else {
             reject(new Error('Auth verify response missing jwtToken'));

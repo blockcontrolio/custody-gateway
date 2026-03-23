@@ -13,10 +13,7 @@ describe('YellowClientService', () => {
   let yellowService: jest.Mocked<
     Pick<
       YellowService,
-      | 'isEnabled'
-      | 'registerPendingResponse'
-      | 'deletePendingResponse'
-      | 'persistSignedState'
+      'isEnabled' | 'registerPendingResponse' | 'deletePendingResponse' | 'persistSignedState'
     >
   >;
   let clearNodeService: jest.Mocked<Pick<ClearNodeService, 'sendRaw'>>;

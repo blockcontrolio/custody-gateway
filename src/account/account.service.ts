@@ -1,13 +1,10 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import type { Address } from 'viem';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { KeyProvider } from '../key-provider/index.js';
+import { CustodyService } from '../custody/custody.service.js';
+import { resolveTokenAddress, TOKENS, DEFAULT_CHAIN } from '../custody/custody.constants.js';
 
 export interface WalletInfo {
   address: string;
@@ -27,6 +24,7 @@ export class AccountService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly keyProvider: KeyProvider,
+    private readonly custodyService: CustodyService,
   ) {}
 
   /**
@@ -145,5 +143,63 @@ export class AccountService {
       where: { address },
     });
     return wallet?.userId ?? null;
+  }
+
+  /**
+   * Get ETH + token balances for a user's primary wallet.
+   */
+  async getBalance(
+    userId: string,
+    chainName = DEFAULT_CHAIN,
+  ): Promise<{
+    userId: string;
+    address: string;
+    chain: string;
+    eth: string;
+    tokens: Record<string, string>;
+  }> {
+    const address = await this.resolveAddress(userId);
+    const ethBal = await this.custodyService.getWalletBalance(address, chainName);
+
+    const chainTokens = TOKENS[chainName] ?? {};
+    const tokens: Record<string, string> = {};
+    for (const [symbol, tokenAddr] of Object.entries(chainTokens)) {
+      try {
+        const bal = await this.custodyService.getTokenBalance(
+          address,
+          tokenAddr as Address,
+          chainName,
+        );
+        tokens[symbol] = bal.formatted;
+      } catch {
+        tokens[symbol] = '0';
+      }
+    }
+
+    return { userId, address, chain: chainName, eth: ethBal.formatted, tokens };
+  }
+
+  /**
+   * Transfer ETH or ERC-20 tokens from a user's wallet.
+   */
+  async transfer(
+    userId: string,
+    to: string,
+    asset: string,
+    amount: string,
+    chainName = DEFAULT_CHAIN,
+  ): Promise<unknown> {
+    const from = await this.resolveAddress(userId);
+
+    if (asset.toLowerCase() === 'eth') {
+      const { parseEther } = await import('viem');
+      return this.custodyService.transferEth(from, to as Address, parseEther(amount), chainName);
+    }
+
+    const tokenAddr = resolveTokenAddress(asset, chainName);
+    if (!tokenAddr) {
+      throw new BadRequestException(`Unknown token "${asset}" on "${chainName}"`);
+    }
+    return this.custodyService.transferToken(from, to as Address, tokenAddr, amount, chainName);
   }
 }

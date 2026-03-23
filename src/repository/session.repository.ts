@@ -33,10 +33,7 @@ export class SessionRepository {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async upsertActive(
-    sessionId: string,
-    metadata?: SessionMetadata,
-  ): Promise<void> {
+  async upsertActive(sessionId: string, metadata?: SessionMetadata): Promise<void> {
     try {
       await this.prisma.yellowSession.upsert({
         where: { sessionId },
@@ -51,9 +48,7 @@ export class SessionRepository {
         },
       });
     } catch (err) {
-      this.logger.warn(
-        `Failed to persist session ${sessionId}: ${errorMessage(err)}`,
-      );
+      this.logger.warn(`Failed to persist session ${sessionId}: ${errorMessage(err)}`);
     }
   }
 
@@ -66,25 +61,18 @@ export class SessionRepository {
         update: { status: YellowSessionStatus.closed, closedAt },
       });
     } catch (err) {
-      this.logger.warn(
-        `Failed to mark session ${sessionId} closed: ${errorMessage(err)}`,
-      );
+      this.logger.warn(`Failed to mark session ${sessionId} closed: ${errorMessage(err)}`);
     }
   }
 
-  async updateMetadata(
-    sessionId: string,
-    metadata: SessionMetadata,
-  ): Promise<void> {
+  async updateMetadata(sessionId: string, metadata: SessionMetadata): Promise<void> {
     try {
       await this.prisma.yellowSession.update({
         where: { sessionId },
         data: { metadata: metadata as unknown as Prisma.InputJsonValue },
       });
     } catch (err) {
-      this.logger.warn(
-        `Failed to update metadata for session ${sessionId}: ${errorMessage(err)}`,
-      );
+      this.logger.warn(`Failed to update metadata for session ${sessionId}: ${errorMessage(err)}`);
     }
   }
 
@@ -96,9 +84,7 @@ export class SessionRepository {
       if (!row) return undefined;
       return this.toStoredSession(row);
     } catch (err) {
-      this.logger.warn(
-        `Failed to fetch session ${sessionId}: ${errorMessage(err)}`,
-      );
+      this.logger.warn(`Failed to fetch session ${sessionId}: ${errorMessage(err)}`);
     }
     return undefined;
   }

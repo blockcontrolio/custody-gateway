@@ -12,9 +12,7 @@ async function bootstrap() {
     .filter(Boolean);
 
   app.enableCors(
-    allowedOrigins?.length
-      ? { origin: allowedOrigins, credentials: true }
-      : undefined,
+    allowedOrigins?.length ? { origin: allowedOrigins, credentials: true } : undefined,
   );
 
   // Global API Key guard (service-to-service auth)
@@ -24,9 +22,7 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('Custody Gateway')
-    .setDescription(
-      'API for Yellow Network ClearNode integration (sessions, channels, transfers)',
-    )
+    .setDescription('API for Yellow Network ClearNode integration (sessions, channels, transfers)')
     .setVersion('1.0')
     .addApiKey({ type: 'apiKey', name: 'X-API-Key', in: 'header' }, 'api-key')
     .build();

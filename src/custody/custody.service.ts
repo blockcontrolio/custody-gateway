@@ -1,11 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  formatEther,
-} from 'viem';
+import { createPublicClient, createWalletClient, http, formatEther } from 'viem';
 import type { Address, Hex, PublicClient, Hash } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { CustodyAbi, Erc20Abi, NitroliteClient, WalletStateSigner } from '@erc7824/nitrolite';
@@ -63,9 +58,7 @@ export class CustodyService {
   /** Create a public client for a given chain name. */
   private getPublicClient(chainName: string): PublicClient {
     const cfg = this.getChainConfig(chainName);
-    const rpcUrl = cfg.rpcEnvKey
-      ? this.config.get<string>(cfg.rpcEnvKey)
-      : undefined;
+    const rpcUrl = cfg.rpcEnvKey ? this.config.get<string>(cfg.rpcEnvKey) : undefined;
     return createPublicClient({ chain: cfg.chain, transport: http(rpcUrl) });
   }
 
@@ -77,9 +70,7 @@ export class CustodyService {
     const { privateKey } = this.resolveWallet(address);
     const cfg = this.getChainConfig(chainName);
     const account = privateKeyToAccount(privateKey);
-    const rpcUrl = cfg.rpcEnvKey
-      ? this.config.get<string>(cfg.rpcEnvKey)
-      : undefined;
+    const rpcUrl = cfg.rpcEnvKey ? this.config.get<string>(cfg.rpcEnvKey) : undefined;
     const publicClient = createPublicClient({
       chain: cfg.chain,
       transport: http(rpcUrl),
@@ -126,11 +117,13 @@ export class CustodyService {
       functionName: 'balanceOf',
       args: [address],
     })) as bigint;
-    const decimals = (await client.readContract({
-      address: token,
-      abi: Erc20Abi,
-      functionName: 'decimals',
-    }).catch(() => 6)) as number;
+    const decimals = (await client
+      .readContract({
+        address: token,
+        abi: Erc20Abi,
+        functionName: 'decimals',
+      })
+      .catch(() => 6)) as number;
     return {
       balance: balance.toString(),
       formatted: (Number(balance) / 10 ** decimals).toString(),
@@ -322,12 +315,12 @@ export class CustodyService {
     const { cfg, account, publicClient, walletClient } = this.createClients(address, chainName);
 
     // Build proof from current on-chain state
-    const chainData = await publicClient.readContract({
+    const chainData = (await publicClient.readContract({
       address: cfg.custody,
       abi: CustodyAbi,
       functionName: 'getChannelData',
       args: [channelId],
-    }) as any;
+    })) as any;
     const lastState = chainData[4];
     const initProof = {
       intent: Number(lastState.intent),

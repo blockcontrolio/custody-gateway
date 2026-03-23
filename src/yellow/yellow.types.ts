@@ -28,11 +28,7 @@ export type YellowSessionStatus = 'active' | 'closed';
 export type ChannelStateStatus = 'active' | 'closed' | 'challenged';
 
 /** Signed state intent (matches prisma SignedStateIntent). */
-export type SignedStateIntent =
-  | 'OPERATE'
-  | 'INITIALIZE'
-  | 'RESIZE'
-  | 'FINALIZE';
+export type SignedStateIntent = 'OPERATE' | 'INITIALIZE' | 'RESIZE' | 'FINALIZE';
 
 /** Data for persistSignedState (dispute resolution). */
 export interface PersistSignedStateData {

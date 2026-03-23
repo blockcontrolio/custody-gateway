@@ -7,6 +7,7 @@ import { YellowService } from './handler/yellow.service.js';
 import { YellowParserService } from './parser/yellow-parser.service.js';
 import { KeyProviderService } from './providers/key-provider.service.js';
 import { RequestIdService } from './providers/request-id.service.js';
+import { SessionService } from './session.service.js';
 import { YellowController } from './yellow.controller.js';
 import { InvitationRepository } from '../repository/invitation.repository.js';
 import { ChannelFundingService } from '../custody/channel-funding.service.js';
@@ -21,6 +22,7 @@ import { ChannelFundingService } from '../custody/channel-funding.service.js';
     YellowService,
     YellowAuthService,
     YellowClientService,
+    SessionService,
     InvitationRepository,
     ChannelFundingService,
   ],

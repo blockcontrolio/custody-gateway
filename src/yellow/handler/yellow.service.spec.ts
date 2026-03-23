@@ -32,10 +32,7 @@ describe('YellowService', () => {
         method: 'get_ledger_balances',
         result: { balances: [] },
       });
-      expect(resolve).toHaveBeenCalledWith(
-        { balances: [] },
-        'get_ledger_balances',
-      );
+      expect(resolve).toHaveBeenCalledWith({ balances: [] }, 'get_ledger_balances');
     });
 
     it('does not call callback after deletePendingResponse', () => {

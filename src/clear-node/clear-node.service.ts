@@ -21,15 +21,10 @@ function messageDataToText(data: unknown): string {
   if (typeof data === 'string') return data;
   if (Buffer.isBuffer(data)) return data.toString('utf8');
   if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
-  if (
-    Array.isArray(data) &&
-    data.every((chunk): chunk is Buffer => Buffer.isBuffer(chunk))
-  ) {
+  if (Array.isArray(data) && data.every((chunk): chunk is Buffer => Buffer.isBuffer(chunk))) {
     return Buffer.concat(data).toString('utf8');
   }
-  return typeof data === 'object' && data !== null
-    ? JSON.stringify(data)
-    : String(data);
+  return typeof data === 'object' && data !== null ? JSON.stringify(data) : String(data);
 }
 
 @Injectable()
@@ -44,22 +39,15 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
   private shuttingDown = false;
 
   // Connection state for health checks
-  private connectionState: 'connected' | 'disconnected' | 'reconnecting' =
-    'disconnected';
+  private connectionState: 'connected' | 'disconnected' | 'reconnecting' = 'disconnected';
 
   constructor(
     @Inject(ConfigService)
     private readonly configService: Pick<ConfigService, 'get' | 'getOrThrow'>,
     @Inject(YellowParserService)
-    private readonly yellowParserService: Pick<
-      YellowParserService,
-      'parse' | 'parseAndVerify'
-    >,
+    private readonly yellowParserService: Pick<YellowParserService, 'parse' | 'parseAndVerify'>,
     @Inject(YellowService)
-    private readonly yellowService: Pick<
-      YellowService,
-      'isEnabled' | 'handleMessage'
-    >,
+    private readonly yellowService: Pick<YellowService, 'isEnabled' | 'handleMessage'>,
     @Inject(forwardRef(() => YellowAuthService))
     private readonly yellowAuthService: Pick<
       YellowAuthService,
@@ -98,17 +86,12 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('WebSocket connection established');
       this.reconnectAttempt = 0;
       this.connectionState = 'connected';
-      if (
-        this.yellowService.isEnabled() &&
-        this.yellowAuthService.isConfigured()
-      ) {
+      if (this.yellowService.isEnabled() && this.yellowAuthService.isConfigured()) {
         const authPromise = isReconnect
           ? this.yellowAuthService.onReconnect()
           : this.yellowAuthService.startAuth();
         authPromise.catch((err) => {
-          this.logger.warn(
-            `Yellow auth on connect failed: ${errorMessage(err)}`,
-          );
+          this.logger.warn(`Yellow auth on connect failed: ${errorMessage(err)}`);
         });
       }
     };
@@ -117,9 +100,7 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
       const text = messageDataToText(event.data);
       try {
         if (this.yellowService.isEnabled()) {
-          const signerAddress = this.configService.get<string>(
-            'CLEARNODE_SIGNER_ADDRESS',
-          );
+          const signerAddress = this.configService.get<string>('CLEARNODE_SIGNER_ADDRESS');
           if (signerAddress) {
             // Async verification path
             void this.yellowParserService
@@ -128,15 +109,11 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
                 if (parsed) {
                   this.yellowService.handleMessage(parsed);
                 } else {
-                  this.logger.debug(
-                    `Received (unparsed): ${text.slice(0, 200)}`,
-                  );
+                  this.logger.debug(`Received (unparsed): ${text.slice(0, 200)}`);
                 }
               })
               .catch((err) => {
-                this.logger.warn(
-                  `Message verification error: ${errorMessage(err)}`,
-                );
+                this.logger.warn(`Message verification error: ${errorMessage(err)}`);
               });
           } else {
             const parsed = this.yellowParserService.parse(text);
@@ -161,9 +138,7 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.ws.on('close', (code, reason) => {
-      this.logger.warn(
-        `WebSocket closed: ${code} ${messageDataToText(reason)}`,
-      );
+      this.logger.warn(`WebSocket closed: ${code} ${messageDataToText(reason)}`);
       this.connectionState = 'disconnected';
       if (!this.shuttingDown) {
         this.scheduleReconnect();
@@ -173,12 +148,9 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
 
   private scheduleReconnect(): void {
     const maxDelay = Number(
-      this.configService.get<string>('WS_RECONNECT_MAX_DELAY_MS') ||
-        DEFAULT_MAX_RECONNECT_DELAY_MS,
+      this.configService.get<string>('WS_RECONNECT_MAX_DELAY_MS') || DEFAULT_MAX_RECONNECT_DELAY_MS,
     );
-    const delay =
-      Math.min(1000 * 2 ** this.reconnectAttempt, maxDelay) +
-      Math.random() * 1000;
+    const delay = Math.min(1000 * 2 ** this.reconnectAttempt, maxDelay) + Math.random() * 1000;
     this.connectionState = 'reconnecting';
     this.logger.log(
       `Scheduling reconnect attempt ${this.reconnectAttempt + 1} in ${Math.round(delay)}ms`,

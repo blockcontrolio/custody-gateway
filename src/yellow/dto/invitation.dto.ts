@@ -10,7 +10,10 @@ export class CreateInvitationDto {
   @ApiProperty({ description: 'Invitee user ID' })
   inviteeUserId: string;
 
-  @ApiProperty({ example: '2000000', description: 'Amount initiator puts into session (base units)' })
+  @ApiProperty({
+    example: '2000000',
+    description: 'Amount initiator puts into session (base units)',
+  })
   amountInitiator: string;
 
   @ApiProperty({ example: '2000000', description: 'Amount invitee puts into session (base units)' })

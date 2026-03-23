@@ -125,11 +125,20 @@ export const TOKENS: Record<string, Record<string, Address>> = {
   base: {
     usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   },
-  // Sandbox uses 'ytest.usd' as symbol — no on-chain token needed (faucet-based)
+  // Sandbox (testnets) — same ytest.usd contract on all sandbox chains
+  ethereum_sepolia: {
+    'ytest.usd': '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+  },
+  base_sepolia: {
+    'ytest.usd': '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+  },
+  polygon_amoy: {
+    'ytest.usd': '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+  },
 };
 
 /** Default chain for operations when not specified. */
-export const DEFAULT_CHAIN = 'ethereum';
+export const DEFAULT_CHAIN = 'ethereum_sepolia';
 
 /** Resolve token symbol to on-chain contract address. */
 export function resolveTokenAddress(

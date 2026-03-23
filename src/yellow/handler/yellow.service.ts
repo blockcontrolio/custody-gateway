@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  Optional,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, Optional, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SessionRepository } from '../../repository/session.repository.js';
 import type { StoredSession, SessionMetadata } from '../../repository/session.repository.js';
@@ -29,10 +23,7 @@ export class YellowService implements OnModuleDestroy {
   /** Active sessions by sessionId (in-memory cache). */
   private readonly sessions = new Map<string, StoredSession>();
   /** Pending response callbacks by requestId (for outgoing requests). */
-  private readonly pendingResponses = new Map<
-    number,
-    (result: unknown, method?: string) => void
-  >();
+  private readonly pendingResponses = new Map<number, (result: unknown, method?: string) => void>();
 
   constructor(
     @Inject(ConfigService)
@@ -74,18 +65,12 @@ export class YellowService implements OnModuleDestroy {
         }
         break;
       case 'unknown':
-        this.logger.debug(
-          `Unknown message shape: ${JSON.stringify(parsed.raw).slice(0, 200)}`,
-        );
+        this.logger.debug(`Unknown message shape: ${JSON.stringify(parsed.raw).slice(0, 200)}`);
         break;
     }
   }
 
-  private handleResponse(
-    method: string,
-    result: unknown,
-    requestId: number,
-  ): void {
+  private handleResponse(method: string, result: unknown, requestId: number): void {
     this.resolvePending(requestId, result, method);
 
     if (method === 'error') {
@@ -108,20 +93,14 @@ export class YellowService implements OnModuleDestroy {
     this.logger.debug(`Response: method=${method} requestId=${requestId}`);
   }
 
-  private resolvePending(
-    requestId: number,
-    result: unknown,
-    method: string,
-  ): void {
+  private resolvePending(requestId: number, result: unknown, method: string): void {
     const pending = this.pendingResponses.get(requestId);
     if (!pending) return;
     this.pendingResponses.delete(requestId);
     try {
       pending(result, method);
     } catch (err) {
-      this.logger.warn(
-        `Pending callback error for requestId=${requestId}: ${errorMessage(err)}`,
-      );
+      this.logger.warn(`Pending callback error for requestId=${requestId}: ${errorMessage(err)}`);
     }
   }
 
@@ -199,10 +178,7 @@ export class YellowService implements OnModuleDestroy {
     }
   }
 
-  async onSessionCreated(
-    sessionId: string,
-    metadata?: SessionMetadata,
-  ): Promise<void> {
+  async onSessionCreated(sessionId: string, metadata?: SessionMetadata): Promise<void> {
     const now = Date.now();
     const session: StoredSession = {
       sessionId,
@@ -276,9 +252,7 @@ export class YellowService implements OnModuleDestroy {
     const amount = this.formatPayloadField(p?.amount);
     const sender = this.formatPayloadField(p?.sender);
     const recipient = this.formatPayloadField(p?.recipient);
-    this.logger.log(
-      `[Yellow] payment: amount=${amount} sender=${sender} recipient=${recipient}`,
-    );
+    this.logger.log(`[Yellow] payment: amount=${amount} sender=${sender} recipient=${recipient}`);
   }
 
   onSessionMessage(payload: unknown): void {
@@ -286,21 +260,15 @@ export class YellowService implements OnModuleDestroy {
   }
 
   onBalanceUpdate(payload: unknown): void {
-    this.logger.debug(
-      `[Yellow] balance_update (bu): ${JSON.stringify(payload)}`,
-    );
+    this.logger.debug(`[Yellow] balance_update (bu): ${JSON.stringify(payload)}`);
   }
 
   onChannelUpdate(payload: unknown): void {
-    this.logger.debug(
-      `[Yellow] channel_update (cu): ${JSON.stringify(payload)}`,
-    );
+    this.logger.debug(`[Yellow] channel_update (cu): ${JSON.stringify(payload)}`);
     if (this.channelRepo) {
-      this.channelRepo.upsertFromPayload(payload).catch((err) =>
-        this.logger.warn(
-          `Failed to persist channel update: ${errorMessage(err)}`,
-        ),
-      );
+      this.channelRepo
+        .upsertFromPayload(payload)
+        .catch((err) => this.logger.warn(`Failed to persist channel update: ${errorMessage(err)}`));
     }
   }
 
@@ -315,9 +283,7 @@ export class YellowService implements OnModuleDestroy {
   }
 
   onAppSessionUpdate(payload: unknown): void {
-    this.logger.debug(
-      `[Yellow] app_session_update (asu): ${JSON.stringify(payload)}`,
-    );
+    this.logger.debug(`[Yellow] app_session_update (asu): ${JSON.stringify(payload)}`);
     const p = payload as Record<string, unknown>;
     if (safeString(p?.status).toLowerCase() === 'closed') {
       const id = this.extractSessionId(p);

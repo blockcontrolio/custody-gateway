@@ -5,12 +5,7 @@ import { YellowAuthService } from '../yellow/auth/yellow-auth.service.js';
 import { YellowService } from '../yellow/handler/yellow.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Public } from '../auth/index.js';
-import type {
-  AuthState,
-  ConnectionState,
-  DbState,
-  HealthResponse,
-} from './health.types.js';
+import type { AuthState, ConnectionState, DbState, HealthResponse } from './health.dto.js';
 import { HealthResponseDto } from './health.dto.js';
 
 @ApiTags('Health')

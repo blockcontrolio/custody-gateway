@@ -38,10 +38,7 @@ export class YellowClientService {
     @Inject(YellowService)
     private readonly yellowService: Pick<
       YellowService,
-      | 'isEnabled'
-      | 'registerPendingResponse'
-      | 'deletePendingResponse'
-      | 'persistSignedState'
+      'isEnabled' | 'registerPendingResponse' | 'deletePendingResponse' | 'persistSignedState'
     >,
     @Inject(KeyProviderService)
     private readonly keyProvider: Pick<
@@ -83,11 +80,7 @@ export class YellowClientService {
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.yellowService.deletePendingResponse(requestId);
-        reject(
-          new Error(
-            `RPC request ${requestId} timed out after ${RPC_TIMEOUT_MS}ms`,
-          ),
-        );
+        reject(new Error(`RPC request ${requestId} timed out after ${RPC_TIMEOUT_MS}ms`));
       }, RPC_TIMEOUT_MS);
 
       const cleanup = (err: Error) => {
@@ -96,17 +89,14 @@ export class YellowClientService {
         reject(err);
       };
 
-      this.yellowService.registerPendingResponse(
-        requestId,
-        (result, method) => {
-          clearTimeout(timeout);
-          if (method === 'error') reject(new Error(String(result)));
-          else {
-            this.tryPersistSignedState(result, method);
-            resolve(result as T);
-          }
-        },
-      );
+      this.yellowService.registerPendingResponse(requestId, (result, method) => {
+        clearTimeout(timeout);
+        if (method === 'error') reject(new Error(String(result)));
+        else {
+          this.tryPersistSignedState(result, method);
+          resolve(result as T);
+        }
+      });
 
       buildMessage(signer)
         .then((msg) => this.clearNodeService.sendRaw(msg))
@@ -125,9 +115,7 @@ export class YellowClientService {
     return this.sendRequest<T>(requestId, (s) => build(s, requestId), signerAddress);
   }
 
-  async createAppSession(
-    params: CreateAppSessionRequestParams,
-  ): Promise<unknown> {
+  async createAppSession(params: CreateAppSessionRequestParams): Promise<unknown> {
     const participants = (params.definition?.participants ?? []) as Hex[];
     return this.rpc('create_app_session', async (s, id) => {
       const msg = await createAppSessionMessage(s, params, id);
@@ -155,9 +143,7 @@ export class YellowClientService {
       const key = this.globalKeyProvider.getKey(addr);
       if (!key) continue;
       const signer = createECDSAMessageSigner(key);
-      sigs.push(
-        await signer(parsed.req as Parameters<MessageSigner>[0]),
-      );
+      sigs.push(await signer(parsed.req as Parameters<MessageSigner>[0]));
     }
 
     if (sigs.length > 1) {
@@ -177,9 +163,7 @@ export class YellowClientService {
     allocations: Array<{ asset: string; amount: string; participant: Hex }>;
     session_data?: string;
   }): Promise<unknown> {
-    const participants = [
-      ...new Set(params.allocations.map((a) => a.participant)),
-    ] as Hex[];
+    const participants = [...new Set(params.allocations.map((a) => a.participant))] as Hex[];
     return this.rpc('submit_app_state', async (s, id) => {
       let rpcParams: SubmitAppStateRequestParamsV04 | SubmitAppStateRequestParamsV02;
 
@@ -213,9 +197,7 @@ export class YellowClientService {
     });
   }
 
-  async closeAppSession(
-    params: CloseAppSessionRequestParams,
-  ): Promise<unknown> {
+  async closeAppSession(params: CloseAppSessionRequestParams): Promise<unknown> {
     const participants = [
       ...new Set(
         ((params as { allocations?: Array<{ participant: string }> }).allocations ?? []).map(
@@ -238,28 +220,33 @@ export class YellowClientService {
     params: { chain_id: number; token: Address },
     signerAddress?: string,
   ): Promise<{ channel_id: string; channel: any; state: any; server_signature: string }> {
-    return this.rpc('create_channel', (s, id) =>
-      createCreateChannelMessage(s, params, id),
+    return this.rpc(
+      'create_channel',
+      (s, id) => createCreateChannelMessage(s, params, id),
       signerAddress,
     );
   }
 
   async resizeChannel(
-    params: { channel_id: Hex; resize_amount?: bigint; allocate_amount?: bigint; funds_destination: Address },
+    params: {
+      channel_id: Hex;
+      resize_amount?: bigint;
+      allocate_amount?: bigint;
+      funds_destination: Address;
+    },
     signerAddress?: string,
   ): Promise<{ channel_id: string; state: any; server_signature: string }> {
-    return this.rpc('resize_channel', (s, id) =>
-      createResizeChannelMessage(s, params, id),
+    return this.rpc(
+      'resize_channel',
+      (s, id) => createResizeChannelMessage(s, params, id),
       signerAddress,
     );
   }
 
-  async getChannels(
-    participant: Address,
-    signerAddress?: string,
-  ): Promise<{ channels: any[] }> {
-    return this.rpc('get_channels', (s, id) =>
-      createGetChannelsMessage(s, participant, undefined, id),
+  async getChannels(participant: Address, signerAddress?: string): Promise<{ channels: any[] }> {
+    return this.rpc(
+      'get_channels',
+      (s, id) => createGetChannelsMessage(s, participant, undefined, id),
       signerAddress,
     );
   }
@@ -267,8 +254,9 @@ export class YellowClientService {
   async getLedgerBalances(
     signerAddress?: string,
   ): Promise<{ ledger_balances: Array<{ asset: string; amount: string }> }> {
-    return this.rpc('get_ledger_balances', (s, id) =>
-      createGetLedgerBalancesMessage(s, undefined, id),
+    return this.rpc(
+      'get_ledger_balances',
+      (s, id) => createGetLedgerBalancesMessage(s, undefined, id),
       signerAddress,
     );
   }
@@ -278,8 +266,9 @@ export class YellowClientService {
     fundsDestination: Address,
     signerAddress?: string,
   ): Promise<{ state: any; server_signature: string }> {
-    return this.rpc('close_channel', (s, id) =>
-      createCloseChannelMessage(s, channelId, fundsDestination, id),
+    return this.rpc(
+      'close_channel',
+      (s, id) => createCloseChannelMessage(s, channelId, fundsDestination, id),
       signerAddress,
     );
   }
@@ -306,12 +295,15 @@ export class YellowClientService {
       stateVersion:
         typeof r?.stateVersion === 'number' ? r.stateVersion : ((r?.version as number) ?? 0),
       intent:
-        typeof intent === 'string' ? intent : typeof intent === 'number' ? String(intent) : 'OPERATE',
+        typeof intent === 'string'
+          ? intent
+          : typeof intent === 'number'
+            ? String(intent)
+            : 'OPERATE',
       stateData: r?.stateData ?? r?.state ?? {},
       allocations: r?.allocations ?? [],
       signatures,
-      rawMessage:
-        typeof r?.rawMessage === 'string' ? r.rawMessage : JSON.stringify(result),
+      rawMessage: typeof r?.rawMessage === 'string' ? r.rawMessage : JSON.stringify(result),
     };
     void this.yellowService.persistSignedState(data);
   }

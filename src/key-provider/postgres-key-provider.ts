@@ -30,7 +30,7 @@ export class PostgresKeyProvider extends KeyProvider implements OnModuleInit {
     if (!masterKeyHex || masterKeyHex.length !== 64) {
       throw new Error(
         'KEY_ENCRYPTION_MASTER_KEY must be a 64-char hex string (32 bytes). ' +
-        'Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+          "Generate one: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
       );
     }
     this.masterKey = Buffer.from(masterKeyHex, 'hex');
@@ -68,10 +68,7 @@ export class PostgresKeyProvider extends KeyProvider implements OnModuleInit {
   private encrypt(plaintext: string): { encrypted: string; iv: string; tag: string } {
     const iv = crypto.randomBytes(IV_BYTES);
     const cipher = crypto.createCipheriv(ALGO, this.masterKey, iv);
-    const encrypted = Buffer.concat([
-      cipher.update(plaintext, 'utf8'),
-      cipher.final(),
-    ]);
+    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     return {
       encrypted: encrypted.toString('hex'),
@@ -81,11 +78,7 @@ export class PostgresKeyProvider extends KeyProvider implements OnModuleInit {
   }
 
   private decrypt(encrypted: string, iv: string, tag: string): string {
-    const decipher = crypto.createDecipheriv(
-      ALGO,
-      this.masterKey,
-      Buffer.from(iv, 'hex'),
-    );
+    const decipher = crypto.createDecipheriv(ALGO, this.masterKey, Buffer.from(iv, 'hex'));
     decipher.setAuthTag(Buffer.from(tag, 'hex'));
     const decrypted = Buffer.concat([
       decipher.update(Buffer.from(encrypted, 'hex')),
@@ -109,11 +102,7 @@ export class PostgresKeyProvider extends KeyProvider implements OnModuleInit {
     const rows = await this.prisma.managedKey.findMany();
     for (const row of rows) {
       try {
-        const privateKey = this.decrypt(
-          row.encryptedKey,
-          row.iv,
-          row.tag,
-        ) as Hex;
+        const privateKey = this.decrypt(row.encryptedKey, row.iv, row.tag) as Hex;
         this.cache.set(row.address.toLowerCase(), {
           key: privateKey,
           address: row.address as Address,

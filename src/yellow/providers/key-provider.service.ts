@@ -4,7 +4,7 @@ import { createECDSAMessageSigner } from '@erc7824/nitrolite';
 import type { MessageSigner } from '@erc7824/nitrolite';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { KeyProvider } from '../../key-provider';
+import { KeyProvider } from '../../key-provider/index.js';
 
 @Injectable()
 export class KeyProviderService {

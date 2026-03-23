@@ -64,6 +64,30 @@ model ChannelState {
   createdAt    DateTime          @default(now())
 }
 
+// ─── Session Invitations ──────────────────────────────────
+
+enum SessionInvitationStatus {
+  pending
+  accepted
+  rejected
+}
+
+model SessionInvitation {
+  id              String                  @id @default(cuid())
+  token           String
+  initiatorAddr   String
+  inviteeAddr     String
+  amountInitiator String
+  amountInvitee   String
+  status          SessionInvitationStatus @default(pending)
+  sessionId       String?
+  createdAt       DateTime                @default(now())
+  respondedAt     DateTime?
+
+  @@index([inviteeAddr, status])
+  @@index([initiatorAddr])
+}
+
 // ─── Account & Key Management ─────────────────────────────
 
 model ManagedWallet {

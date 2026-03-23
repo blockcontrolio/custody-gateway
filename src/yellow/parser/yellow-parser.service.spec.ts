@@ -1,4 +1,4 @@
-import { YellowParserService } from './yellow-parser.service';
+import { YellowParserService } from './yellow-parser.service.js';
 
 describe('YellowParserService', () => {
   let service: YellowParserService;

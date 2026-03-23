@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { YellowService } from './yellow.service';
+import { YellowService } from './yellow.service.js';
 
 describe('YellowService', () => {
   let service: YellowService;

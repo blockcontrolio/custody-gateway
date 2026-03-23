@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { KeyProvider } from './key-provider.abstract';
+import { KeyProvider } from './key-provider.abstract.js';
 
 @Injectable()
 export class InMemoryKeyProvider extends KeyProvider {

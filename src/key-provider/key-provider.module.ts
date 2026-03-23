@@ -1,9 +1,9 @@
 import { Module, Global } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { KeyProvider } from './key-provider.abstract';
-import { InMemoryKeyProvider } from './in-memory-key-provider';
-import { PostgresKeyProvider } from './postgres-key-provider';
-import { PrismaService } from '../prisma/prisma.service';
+import { KeyProvider } from './key-provider.abstract.js';
+import { InMemoryKeyProvider } from './in-memory-key-provider.js';
+import { PostgresKeyProvider } from './postgres-key-provider.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 
 @Global()
 @Module({

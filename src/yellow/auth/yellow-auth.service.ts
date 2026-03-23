@@ -19,17 +19,30 @@ import type {
 } from '@erc7824/nitrolite';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Hex, WalletClient } from 'viem';
-import { ClearNodeService } from '../../clear-node/clear-node.service';
-import { YellowService } from '../handler/yellow.service';
-import { KeyProviderService } from '../providers/key-provider.service';
-import { RequestIdService } from '../providers/request-id.service';
-import { AUTH_TIMEOUT_MS } from '../yellow.constants';
-import { errorMessage, toError } from '../yellow.utils';
+import { ClearNodeService } from '../../clear-node/clear-node.service.js';
+import { YellowService } from '../handler/yellow.service.js';
+import { KeyProviderService } from '../providers/key-provider.service.js';
+import { RequestIdService } from '../providers/request-id.service.js';
+import { AUTH_TIMEOUT_MS } from '../yellow.constants.js';
+import { errorMessage, toError } from '../yellow.utils.js';
 
 @Injectable()
 export class YellowAuthService {
   private readonly logger = new Logger(YellowAuthService.name);
-  private sessionToken: string | null = null;
+
+  /** JWT tokens per wallet address (lowercase). */
+  private readonly sessionTokens = new Map<string, string>();
+
+  /** Private keys for authenticated wallets — needed to re-auth after reconnect. */
+  private readonly authedKeys = new Map<string, Hex>();
+
+  /** Serialize auth flows to avoid concurrent request-ID / callback conflicts. */
+  private authQueue: Promise<void> = Promise.resolve();
+
+  /** Single-slot callback used during an auth flow (serialized via authQueue). */
+  private pendingAuthResolve:
+    | ((result: unknown, method?: string) => void)
+    | null = null;
 
   constructor(
     @Optional()
@@ -50,8 +63,22 @@ export class YellowAuthService {
     >,
   ) {}
 
+  // ─── Public API ────────────────────────────────────────
+
+  /** Get primary session token (backward-compat). */
   getSessionToken(): string | null {
-    return this.sessionToken;
+    if (this.sessionTokens.size === 0) return null;
+    return this.sessionTokens.values().next().value ?? null;
+  }
+
+  /** Get session token for a specific wallet. */
+  getSessionTokenForAddress(address: string): string | null {
+    return this.sessionTokens.get(address.toLowerCase()) ?? null;
+  }
+
+  /** Whether there is at least one authenticated wallet. */
+  hasAnyAuth(): boolean {
+    return this.sessionTokens.size > 0;
   }
 
   isConfigured(): boolean {
@@ -59,8 +86,25 @@ export class YellowAuthService {
   }
 
   /**
-   * Run auth flow: auth_request -> auth_challenge -> auth_verify, then store JWT.
-   * Call after WebSocket is connected. No-op if YELLOW_SIGNER_PRIVATE_KEY is not set.
+   * Called on WebSocket reconnect — clears cached tokens and re-auths
+   * all previously authenticated wallets (ClearNode loses auth on disconnect).
+   */
+  async onReconnect(): Promise<void> {
+    const keysToReauth = [...this.authedKeys.values()];
+    this.sessionTokens.clear();
+    this.logger.log(`WebSocket reconnected, re-authenticating ${keysToReauth.length} wallet(s)...`);
+    for (const key of keysToReauth) {
+      try {
+        await this.authWallet(key);
+      } catch (err) {
+        this.logger.error(`Re-auth failed: ${errorMessage(err)}`);
+      }
+    }
+  }
+
+  /**
+   * Auth the default signer (YELLOW_SIGNER_PRIVATE_KEY).
+   * Called automatically after WebSocket connects.
    */
   async startAuth(): Promise<void> {
     if (!this.isConfigured()) {
@@ -73,91 +117,113 @@ export class YellowAuthService {
       this.logger.warn('ClearNodeService not available; skipping auth');
       return;
     }
-
     const privateKey = this.keyProvider.getSignerKey()!;
     try {
-      const account = privateKeyToAccount(privateKey);
-      const address = account.address;
-      const requestId = this.requestIdService.nextId();
-
-      // expires_at must be Unix SECONDS (not milliseconds!)
-      const expireSec = Number(
-        this.configService.get<string>('YELLOW_AUTH_EXPIRE_SEC') || '86400',
-      );
-      const expiresAt = BigInt(Math.floor(Date.now() / 1000) + expireSec);
-
-      // Generate a fresh session key each time to avoid "session key already exists" errors
-      const sessionKeyPrivate = generatePrivateKey();
-      const sessionKeyAddress = privateKeyToAccount(sessionKeyPrivate).address;
-
-      const authParams: AuthRequestParams = {
-        address,
-        session_key: sessionKeyAddress,
-        application:
-          this.configService.get<string>('YELLOW_AUTH_APP_NAME') ||
-          'custody-gateway',
-        allowances: [],
-        expires_at: expiresAt,
-        scope:
-          this.configService.get<string>('YELLOW_AUTH_SCOPE') || 'console',
-      };
-
-      this.lastAuthParams = authParams;
-      const authRequestStr = await createAuthRequestMessage(
-        authParams,
-        requestId,
-        Date.now(),
-      );
-
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          if (this.pendingAuthResolve) {
-            this.pendingAuthResolve = null;
-            reject(new Error('Auth request timeout'));
-          }
-        }, AUTH_TIMEOUT_MS);
-
-        this.pendingAuthResolve = (result: unknown, method?: string) => {
-          clearTimeout(timeout);
-          this.pendingAuthResolve = null;
-          if (method === 'error') {
-            reject(new Error(String(result)));
-            return;
-          }
-          if (method === 'auth_challenge') {
-            void this.handleAuthChallenge(
-              result as {
-                challenge_message?: string;
-                challengeMessage?: string;
-              },
-              resolve,
-              reject,
-            );
-            return;
-          }
-          reject(new Error(`Unexpected auth response method: ${method}`));
-        };
-
-        this.yellowService.registerPendingResponse(
-          requestId,
-          this.pendingAuthResolve,
-        );
-        this.clearNodeService!.sendRaw(authRequestStr);
-      });
+      await this.authWallet(privateKey);
     } catch (err) {
       this.logger.error(`Auth failed: ${errorMessage(err)}`);
     }
   }
 
-  private pendingAuthResolve:
-    | ((result: unknown, method?: string) => void)
-    | null = null;
+  /**
+   * Authenticate any wallet by its private key.
+   * Safe to call multiple times — skips if already authenticated.
+   * Queued internally so concurrent calls don't collide.
+   */
+  async authWallet(privateKey: Hex): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.authQueue = this.authQueue
+        .then(() => this.runAuthFlow(privateKey))
+        .then(resolve)
+        .catch(reject);
+    });
+  }
 
-  /** Stored during startAuth for use in handleAuthChallenge EIP-712 signing. */
-  private lastAuthParams: AuthRequestParams | null = null;
+  // ─── Internal ──────────────────────────────────────────
+
+  private async runAuthFlow(privateKey: Hex): Promise<void> {
+    if (!this.clearNodeService) {
+      throw new Error('ClearNodeService not available');
+    }
+
+    const account = privateKeyToAccount(privateKey);
+    const address = account.address;
+
+    // Already authed — skip
+    if (this.sessionTokens.has(address.toLowerCase())) {
+      this.logger.debug(`Wallet ${address} already authenticated`);
+      return;
+    }
+
+    const requestId = this.requestIdService.nextId();
+    const expireSec = Number(
+      this.configService.get<string>('YELLOW_AUTH_EXPIRE_SEC') || '86400',
+    );
+    const expiresAt = BigInt(Math.floor(Date.now() / 1000) + expireSec);
+
+    // Fresh session key each time (avoids "session key already exists")
+    const sessionKeyPrivate = generatePrivateKey();
+    const sessionKeyAddress = privateKeyToAccount(sessionKeyPrivate).address;
+
+    const authParams: AuthRequestParams = {
+      address,
+      session_key: sessionKeyAddress,
+      application: 'clearnode', // root access — bypasses allowance checks
+      allowances: [],
+      expires_at: expiresAt,
+      scope:
+        this.configService.get<string>('YELLOW_AUTH_SCOPE') || 'console',
+    };
+
+    const authRequestStr = await createAuthRequestMessage(
+      authParams,
+      requestId,
+      Date.now(),
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (this.pendingAuthResolve) {
+          this.pendingAuthResolve = null;
+          reject(new Error('Auth request timeout'));
+        }
+      }, AUTH_TIMEOUT_MS);
+
+      this.pendingAuthResolve = (result: unknown, method?: string) => {
+        clearTimeout(timeout);
+        this.pendingAuthResolve = null;
+        if (method === 'error') {
+          reject(new Error(String(result)));
+          return;
+        }
+        if (method === 'auth_challenge') {
+          void this.handleAuthChallenge(
+            result as {
+              challenge_message?: string;
+              challengeMessage?: string;
+            },
+            privateKey,
+            authParams,
+            resolve,
+            reject,
+          );
+          return;
+        }
+        reject(new Error(`Unexpected auth response method: ${method}`));
+      };
+
+      this.yellowService.registerPendingResponse(
+        requestId,
+        this.pendingAuthResolve,
+      );
+      this.clearNodeService!.sendRaw(authRequestStr);
+    });
+  }
 
   private async handleAuthChallenge(
     result: { challenge_message?: string; challengeMessage?: string },
+    privateKey: Hex,
+    authParams: AuthRequestParams,
     resolve: () => void,
     reject: (err: Error) => void,
   ): Promise<void> {
@@ -169,18 +235,16 @@ export class YellowAuthService {
     }
 
     try {
-      const privateKey = this.keyProvider.getSignerKey()!;
       const account = privateKeyToAccount(privateKey);
-      const params = this.lastAuthParams!;
 
-      // Build EIP-712 signer (ClearNode requires EIP-712 typed data signatures for auth)
+      // Build EIP-712 signer
       const partialMessage: PartialEIP712AuthMessage = {
-        scope: params.scope,
-        session_key: params.session_key,
-        expires_at: params.expires_at,
-        allowances: params.allowances,
+        scope: authParams.scope,
+        session_key: authParams.session_key,
+        expires_at: authParams.expires_at,
+        allowances: authParams.allowances,
       };
-      const domain: EIP712AuthDomain = { name: params.application };
+      const domain: EIP712AuthDomain = { name: authParams.application };
       const walletLikeClient = {
         account,
         signTypedData: (args: Parameters<typeof account.signTypedData>[0]) =>
@@ -222,8 +286,11 @@ export class YellowAuthService {
             | undefined;
           const token = res?.jwtToken ?? res?.jwt_token;
           if (token) {
-            this.sessionToken = token;
-            this.logger.log('Yellow auth success; JWT stored');
+            this.sessionTokens.set(account.address.toLowerCase(), token);
+            this.authedKeys.set(account.address.toLowerCase(), privateKey);
+            this.logger.log(
+              `Yellow auth success for ${account.address}; JWT stored`,
+            );
             resolve();
           } else {
             reject(new Error('Auth verify response missing jwtToken'));

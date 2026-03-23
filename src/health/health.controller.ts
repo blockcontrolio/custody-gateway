@@ -1,17 +1,17 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
-import { ClearNodeService } from '../clear-node/clear-node.service';
-import { YellowAuthService } from '../yellow/auth/yellow-auth.service';
-import { YellowService } from '../yellow/handler/yellow.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { Public } from '../auth';
+import { ClearNodeService } from '../clear-node/clear-node.service.js';
+import { YellowAuthService } from '../yellow/auth/yellow-auth.service.js';
+import { YellowService } from '../yellow/handler/yellow.service.js';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { Public } from '../auth/index.js';
 import type {
   AuthState,
   ConnectionState,
   DbState,
   HealthResponse,
-} from './health.types';
-import { HealthResponseDto } from './health.dto';
+} from './health.types.js';
+import { HealthResponseDto } from './health.dto.js';
 
 @ApiTags('Health')
 @Controller()

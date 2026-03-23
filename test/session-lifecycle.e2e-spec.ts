@@ -13,8 +13,15 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 
-const WALLET_A = '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2';
-const WALLET_B = '0xF44020407a75d7B8525d7aEC114A16f7ebbfc9d6';
+import { privateKeyToAccount } from 'viem/accounts';
+
+// Derive wallet addresses from env keys at runtime — never hardcode
+const WALLET_A = process.env.YELLOW_SIGNER_PRIVATE_KEY
+  ? privateKeyToAccount(process.env.YELLOW_SIGNER_PRIVATE_KEY as `0x${string}`).address
+  : '';
+const WALLET_B = process.env.YELLOW_SIGNER_PRIVATE_KEY_B
+  ? privateKeyToAccount(process.env.YELLOW_SIGNER_PRIVATE_KEY_B as `0x${string}`).address
+  : '';
 
 async function waitForHealth(
   server: App,
@@ -47,8 +54,7 @@ describe('Session Lifecycle (e2e)', () => {
   beforeAll(async () => {
     process.env.CLEARNODE_URL = 'wss://clearnet-sandbox.yellow.com/ws';
     process.env.YELLOW_PARTNER_ENABLED = 'true';
-    process.env.YELLOW_SIGNER_PRIVATE_KEY =
-      '0x67c468c2473b4b272cc4c17345e8b9b0138fe8baf7c6873b68e0b37b24830427';
+    // YELLOW_SIGNER_PRIVATE_KEY must be set in .env — never hardcode
     process.env.YELLOW_AUTH_APP_NAME = 'custody-e2e';
     process.env.YELLOW_AUTH_SCOPE = 'console';
     process.env.DATABASE_URL =

@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
-import { SessionRepository } from './session.repository';
-import { ChannelRepository } from './channel.repository';
-import { SignedStateRepository } from './signed-state.repository';
+import { SessionRepository } from './session.repository.js';
+import { ChannelRepository } from './channel.repository.js';
+import { SignedStateRepository } from './signed-state.repository.js';
 
 @Global()
 @Module({

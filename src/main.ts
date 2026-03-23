@@ -1,8 +1,8 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { AppModule } from './app.module';
-import { ApiKeyGuard } from './auth';
+import { AppModule } from './app.module.js';
+import { ApiKeyGuard } from './auth/index.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

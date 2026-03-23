@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { YellowSessionStatus } from '../yellow/yellow.constants';
-import { errorMessage } from '../yellow/yellow.utils';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { YellowSessionStatus } from '../yellow/yellow.constants.js';
+import { errorMessage } from '../yellow/yellow.utils.js';
 
 export interface SessionAllocation {
   asset: string;
@@ -23,6 +23,8 @@ export interface StoredSession {
   userId?: string;
   participants?: string[];
   allocations?: SessionAllocation[];
+  /** NitroRPC/0.4 state version — auto-incremented on each updateState. */
+  stateVersion?: number;
 }
 
 @Injectable()

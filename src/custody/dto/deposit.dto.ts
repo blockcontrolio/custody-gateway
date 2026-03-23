@@ -20,8 +20,8 @@ export class DepositDto {
   amount: string;
 
   @ApiProperty({
-    example: 'ethereum_sepolia',
-    description: 'Chain name: ethereum_sepolia, base_sepolia, linea_sepolia, polygon_amoy',
+    example: 'ethereum',
+    description: 'Chain name: ethereum, bsc, polygon, base, linea (mainnet) or ethereum_sepolia, base_sepolia, etc. (testnet)',
   })
   chain: string;
 }

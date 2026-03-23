@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { ChannelStateStatus } from '../yellow/yellow.constants';
-import { errorMessage } from '../yellow/yellow.utils';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { ChannelStateStatus } from '../yellow/yellow.constants.js';
+import { errorMessage } from '../yellow/yellow.utils.js';
 
 type ChannelStatus = 'active' | 'closed' | 'challenged';
 

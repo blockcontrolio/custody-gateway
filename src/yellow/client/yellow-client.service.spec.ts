@@ -1,10 +1,10 @@
 import { RPCProtocolVersion } from '@erc7824/nitrolite';
-import { YellowClientService } from './yellow-client.service';
-import { YellowService } from '../handler/yellow.service';
-import { ClearNodeService } from '../../clear-node/clear-node.service';
-import { KeyProviderService } from '../providers/key-provider.service';
-import { KeyProvider } from '../../key-provider';
-import { RequestIdService } from '../providers/request-id.service';
+import { YellowClientService } from './yellow-client.service.js';
+import { YellowService } from '../handler/yellow.service.js';
+import { ClearNodeService } from '../../clear-node/clear-node.service.js';
+import { KeyProviderService } from '../providers/key-provider.service.js';
+import { KeyProvider } from '../../key-provider/index.js';
+import { RequestIdService } from '../providers/request-id.service.js';
 
 describe('YellowClientService', () => {
   let keyProvider: jest.Mocked<

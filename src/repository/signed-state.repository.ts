@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { SignedStateIntent } from '../yellow/yellow.constants';
-import { errorMessage } from '../yellow/yellow.utils';
-import type { PersistSignedStateData } from '../yellow/yellow.types';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { SignedStateIntent } from '../yellow/yellow.constants.js';
+import { errorMessage } from '../yellow/yellow.utils.js';
+import type { PersistSignedStateData } from '../yellow/yellow.types.js';
 
 type SignedStateIntentType = 'OPERATE' | 'INITIALIZE' | 'RESIZE' | 'FINALIZE';
 

@@ -1,10 +1,12 @@
 import { Module, Global } from '@nestjs/common';
-import { AccountService } from './account.service';
-import { AccountController } from './account.controller';
+import { AccountService } from './account.service.js';
+import { UserController } from './user.controller.js';
+import { CustodyModule } from '../custody/custody.module.js';
 
 @Global()
 @Module({
-  controllers: [AccountController],
+  imports: [CustodyModule],
+  controllers: [UserController],
   providers: [AccountService],
   exports: [AccountService],
 })

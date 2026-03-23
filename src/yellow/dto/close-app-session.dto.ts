@@ -1,30 +1,30 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CloseAppSessionAllocationDto {
-  @ApiProperty({ example: 'ytest.usd', description: 'Asset identifier (e.g. ytest.usd)' })
+  @ApiProperty({ example: 'usdc', description: 'Asset identifier (e.g. usdc)' })
   asset: string;
 
-  @ApiProperty({ example: '1000000', description: 'Final amount for this participant (6 decimals)' })
+  @ApiProperty({ example: '2.300000', description: 'Final amount for this participant (decimal, 6 decimals)' })
   amount: string;
 
   @ApiProperty({
-    example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2',
+    example: '0x539d10F898e01470e400B87bbDe01e45955A9330',
     description: 'Participant address (hex)',
   })
   participant: string;
 }
 
 /**
- * DTO for POST /yellow/sessions/:sessionId/close (close_app_session).
+ * DTO for POST /sessions/:sessionId/close (close_app_session).
  */
 export class CloseAppSessionDto {
   @ApiProperty({
     type: [CloseAppSessionAllocationDto],
     example: [
-      { asset: 'ytest.usd', amount: '900000', participant: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2' },
-      { asset: 'ytest.usd', amount: '1100000', participant: '0xF44020407a75d7B8525d7aEC114A16f7ebbfc9d6' },
+      { asset: 'usdc', amount: '2.300000', participant: '0x539d10F898e01470e400B87bbDe01e45955A9330' },
+      { asset: 'usdc', amount: '1.700000', participant: '0xD988C8fA82Fa37Fa3daD336F169AAdadeFBE77e1' },
     ],
-    description: 'Final distribution — total must equal session total. Funds return to each participant ledger.',
+    description: 'Final distribution — total must equal session total. Funds return to each participant wallet.',
   })
   allocations: CloseAppSessionAllocationDto[];
 

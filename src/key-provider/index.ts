@@ -1,4 +1,4 @@
-export { KeyProvider } from './key-provider.abstract';
-export { InMemoryKeyProvider } from './in-memory-key-provider';
-export { PostgresKeyProvider } from './postgres-key-provider';
-export { KeyProviderModule } from './key-provider.module';
+export { KeyProvider } from './key-provider.abstract.js';
+export { InMemoryKeyProvider } from './in-memory-key-provider.js';
+export { PostgresKeyProvider } from './postgres-key-provider.js';
+export { KeyProviderModule } from './key-provider.module.js';

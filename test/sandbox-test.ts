@@ -20,10 +20,14 @@ import {
   type CreateAppSessionRequestParams,
 } from '@erc7824/nitrolite';
 
-const WALLET_A_KEY =
-  '0x67c468c2473b4b272cc4c17345e8b9b0138fe8baf7c6873b68e0b37b24830427' as Hex;
-const WALLET_B_KEY =
-  '0x6caee6710c247e426b736996bebbf8c1703732a3446f4107408bc8bfb481e711' as Hex;
+import 'dotenv/config';
+
+const WALLET_A_KEY = (process.env.YELLOW_SIGNER_PRIVATE_KEY ?? '') as Hex;
+const WALLET_B_KEY = (process.env.YELLOW_SIGNER_PRIVATE_KEY_B ?? '') as Hex;
+
+if (!WALLET_A_KEY || !WALLET_B_KEY) {
+  throw new Error('Set YELLOW_SIGNER_PRIVATE_KEY and YELLOW_SIGNER_PRIVATE_KEY_B in .env');
+}
 
 const SANDBOX_URL = 'wss://clearnet-sandbox.yellow.com/ws';
 

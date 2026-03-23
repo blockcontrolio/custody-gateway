@@ -20,8 +20,8 @@ export class WithdrawDto {
   amount: string;
 
   @ApiProperty({
-    example: 'ethereum_sepolia',
-    description: 'Chain name',
+    example: 'ethereum',
+    description: 'Chain name: ethereum, bsc, polygon, base, linea (mainnet) or ethereum_sepolia, etc. (testnet)',
   })
   chain: string;
 }

@@ -1,2 +1,2 @@
-export { AccountModule } from './account.module';
-export { AccountService } from './account.service';
+export { AccountModule } from './account.module.js';
+export { AccountService } from './account.service.js';

@@ -1,34 +1,33 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export class SubmitAppStateAllocationDto {
-  @ApiProperty({ example: 'ytest.usd', description: 'Asset identifier (e.g. ytest.usd)' })
+  @ApiProperty({ example: 'usdc', description: 'Asset identifier (e.g. usdc)' })
   asset: string;
 
-  @ApiProperty({ example: '900000', description: 'New amount after state change (6 decimals)' })
+  @ApiProperty({ example: '2.200000', description: 'New amount after state change (decimal, 6 decimals)' })
   amount: string;
 
   @ApiProperty({
-    example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2',
+    example: '0x539d10F898e01470e400B87bbDe01e45955A9330',
     description: 'Participant address (hex)',
   })
   participant: string;
 }
 
 /**
- * DTO for POST /yellow/sessions/:sessionId/state (submit_app_state).
- * Protocol 0.2 format.
+ * DTO for POST /sessions/:sessionId/state (submit_app_state).
+ *
+ * Only `allocations` is required. The backend auto-manages
+ * `intent` ("operate") and `version` (auto-incremented).
  */
 export class SubmitAppStateDto {
   @ApiProperty({
     type: [SubmitAppStateAllocationDto],
     example: [
-      { asset: 'ytest.usd', amount: '900000', participant: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2' },
-      { asset: 'ytest.usd', amount: '1100000', participant: '0xF44020407a75d7B8525d7aEC114A16f7ebbfc9d6' },
+      { asset: 'usdc', amount: '2.200000', participant: '0x539d10F898e01470e400B87bbDe01e45955A9330' },
+      { asset: 'usdc', amount: '1.800000', participant: '0xD988C8fA82Fa37Fa3daD336F169AAdadeFBE77e1' },
     ],
-    description: 'New state — total across all participants must equal the session total',
+    description: 'FINAL allocations state (not delta). Sum must equal session total.',
   })
   allocations: SubmitAppStateAllocationDto[];
-
-  /** Auto-generated as timestamp on the backend. No need to provide. */
-  session_data?: string;
 }

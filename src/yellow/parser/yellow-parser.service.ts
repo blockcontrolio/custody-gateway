@@ -2,8 +2,8 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { recoverMessageAddress } from 'viem';
 import type { Hex } from 'viem';
-import { DEFAULT_MAX_DRIFT_MS } from '../yellow.constants';
-import { ParsedMessage } from '../yellow.types';
+import { DEFAULT_MAX_DRIFT_MS } from '../yellow.constants.js';
+import { ParsedMessage } from '../yellow.types.js';
 
 /**
  * Parses raw WebSocket messages from ClearNode (Nitro RPC format).

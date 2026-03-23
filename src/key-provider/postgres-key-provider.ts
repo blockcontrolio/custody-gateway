@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { PrismaService } from '../prisma/prisma.service';
-import { KeyProvider } from './key-provider.abstract';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { KeyProvider } from './key-provider.abstract.js';
 
 const ALGO = 'aes-256-gcm';
 const IV_BYTES = 12;

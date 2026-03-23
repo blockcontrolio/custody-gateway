@@ -8,11 +8,11 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import WebSocket, { MessageEvent } from 'ws';
-import { YellowAuthService } from '../yellow/auth/yellow-auth.service';
-import { YellowService } from '../yellow/handler/yellow.service';
-import { YellowParserService } from '../yellow/parser/yellow-parser.service';
-import { DEFAULT_MAX_RECONNECT_DELAY_MS } from './clear-node.constants';
-import { errorMessage } from '../yellow/yellow.utils';
+import { YellowAuthService } from '../yellow/auth/yellow-auth.service.js';
+import { YellowService } from '../yellow/handler/yellow.service.js';
+import { YellowParserService } from '../yellow/parser/yellow-parser.service.js';
+import { DEFAULT_MAX_RECONNECT_DELAY_MS } from './clear-node.constants.js';
+import { errorMessage } from '../yellow/yellow.utils.js';
 
 type Json = Record<string, unknown>;
 
@@ -63,7 +63,7 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => YellowAuthService))
     private readonly yellowAuthService: Pick<
       YellowAuthService,
-      'isConfigured' | 'startAuth'
+      'isConfigured' | 'startAuth' | 'onReconnect'
     >,
   ) {
     this.url = this.configService.getOrThrow<string>('CLEARNODE_URL');
@@ -94,6 +94,7 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
+      const isReconnect = this.reconnectAttempt > 0;
       this.logger.log('WebSocket connection established');
       this.reconnectAttempt = 0;
       this.connectionState = 'connected';
@@ -101,7 +102,10 @@ export class ClearNodeService implements OnModuleInit, OnModuleDestroy {
         this.yellowService.isEnabled() &&
         this.yellowAuthService.isConfigured()
       ) {
-        this.yellowAuthService.startAuth().catch((err) => {
+        const authPromise = isReconnect
+          ? this.yellowAuthService.onReconnect()
+          : this.yellowAuthService.startAuth();
+        authPromise.catch((err) => {
           this.logger.warn(
             `Yellow auth on connect failed: ${errorMessage(err)}`,
           );

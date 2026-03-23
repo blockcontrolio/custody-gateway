@@ -6,15 +6,15 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SessionRepository } from '../../repository/session.repository';
-import type { StoredSession, SessionMetadata } from '../../repository/session.repository';
-import { ChannelRepository } from '../../repository/channel.repository';
-import { SignedStateRepository } from '../../repository/signed-state.repository';
-import type { PersistSignedStateData } from '../yellow.types';
-import { errorMessage } from '../yellow.utils';
-import type { ParsedMessage } from '../yellow.types';
+import { SessionRepository } from '../../repository/session.repository.js';
+import type { StoredSession, SessionMetadata } from '../../repository/session.repository.js';
+import { ChannelRepository } from '../../repository/channel.repository.js';
+import { SignedStateRepository } from '../../repository/signed-state.repository.js';
+import type { PersistSignedStateData } from '../yellow.types.js';
+import { errorMessage } from '../yellow.utils.js';
+import type { ParsedMessage } from '../yellow.types.js';
 
-export type { StoredSession, SessionMetadata } from '../../repository/session.repository';
+export type { StoredSession, SessionMetadata } from '../../repository/session.repository.js';
 
 /** Coerce to string only when value is string or number; avoid '[object Object]'. */
 function safeString(value: unknown): string {
@@ -221,10 +221,12 @@ export class YellowService implements OnModuleDestroy {
   async updateSessionAllocations(
     sessionId: string,
     allocations: Array<{ asset: string; amount: string; participant: string }>,
+    stateVersion?: number,
   ): Promise<void> {
     const cached = this.sessions.get(sessionId);
     if (cached) {
       cached.allocations = allocations;
+      if (stateVersion != null) cached.stateVersion = stateVersion;
     }
     if (this.sessionRepo) {
       const existing = await this.sessionRepo.findSession(sessionId);

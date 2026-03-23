@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import type { Address } from 'viem';
-import { PrismaService } from '../prisma/prisma.service';
-import { KeyProvider } from '../key-provider';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { KeyProvider } from '../key-provider/index.js';
 
 export interface WalletInfo {
   address: string;

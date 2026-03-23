@@ -1,36 +1,23 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ServiceUnavailableException } from '@nestjs/common';
-import { YellowController } from './yellow.controller';
-import { YellowClientService } from './client/yellow-client.service';
-import { YellowService } from './handler/yellow.service';
-import { YellowAuthService } from './auth/yellow-auth.service';
-import { AccountService } from '../account';
+import { ServiceUnavailableException, BadRequestException } from '@nestjs/common';
+import { YellowController } from './yellow.controller.js';
+import { YellowClientService } from './client/yellow-client.service.js';
+import { YellowService } from './handler/yellow.service.js';
+import { AccountService } from '../account/index.js';
+import { InvitationRepository } from '../repository/invitation.repository.js';
+import { CustodyService } from '../custody/custody.service.js';
 
-describe('YellowController', () => {
+describe('YellowController (Sessions)', () => {
   let controller: YellowController;
-  let yellowClient: jest.Mocked<
-    Pick<
-      YellowClientService,
-      | 'isConfigured'
-      | 'createAppSession'
-      | 'submitAppState'
-      | 'closeAppSession'
-      | 'getChannels'
-      | 'transfer'
-    >
-  >;
-  let yellowService: jest.Mocked<
-    Pick<YellowService, 'isEnabled' | 'getAllSessions' | 'getSession'>
-  >;
+  let yellowClient: jest.Mocked<Pick<YellowClientService, 'isConfigured' | 'createAppSession' | 'submitAppState' | 'closeAppSession'>>;
+  let yellowService: jest.Mocked<Pick<YellowService, 'isEnabled' | 'getAllSessions' | 'getSession'>>;
 
   beforeEach(async () => {
     yellowClient = {
       isConfigured: jest.fn().mockReturnValue(true),
-      createAppSession: jest.fn().mockResolvedValue({ sessionId: 'sess-1' }),
+      createAppSession: jest.fn().mockResolvedValue({ app_session_id: 'sess-1' }),
       submitAppState: jest.fn().mockResolvedValue({ ok: true }),
       closeAppSession: jest.fn().mockResolvedValue({ ok: true }),
-      getChannels: jest.fn().mockResolvedValue({ channels: [] }),
-      transfer: jest.fn().mockResolvedValue({ txId: 'tx-1' }),
     };
     yellowService = {
       isEnabled: jest.fn().mockReturnValue(true),
@@ -44,12 +31,23 @@ describe('YellowController', () => {
         { provide: YellowClientService, useValue: yellowClient },
         { provide: YellowService, useValue: yellowService },
         {
-          provide: YellowAuthService,
-          useValue: { getSessionToken: jest.fn().mockReturnValue(null) },
-        },
-        {
           provide: AccountService,
           useValue: { resolveAddress: jest.fn().mockResolvedValue('0x1234') },
+        },
+        {
+          provide: InvitationRepository,
+          useValue: {
+            create: jest.fn(),
+            findById: jest.fn(),
+            findPendingForAddress: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: CustodyService,
+          useValue: {
+            getCustodyBalance: jest.fn().mockResolvedValue({ balance: '0' }),
+            withdraw: jest.fn().mockResolvedValue({ txHash: '0x' }),
+          },
         },
       ],
     }).compile();
@@ -57,33 +55,42 @@ describe('YellowController', () => {
     controller = module.get<YellowController>(YellowController);
   });
 
-  describe('ensureYellowReady guard', () => {
+  describe('ensureYellowReady', () => {
     it('throws 503 when Yellow is disabled', async () => {
       yellowService.isEnabled.mockReturnValue(false);
       await expect(
-        controller.createAppSession({ definition: {} as any, allocations: [] }),
+        controller.updateState('sess-1', { allocations: [{ asset: 'usdc', amount: '100', participant: '0x1' }] } as any),
       ).rejects.toThrow(ServiceUnavailableException);
     });
 
     it('throws 503 when signer not configured', async () => {
       yellowClient.isConfigured.mockReturnValue(false);
       await expect(
-        controller.createAppSession({ definition: {} as any, allocations: [] }),
-      ).rejects.toThrow('YELLOW_SIGNER_PRIVATE_KEY');
+        controller.updateState('sess-1', { allocations: [{ asset: 'usdc', amount: '100', participant: '0x1' }] } as any),
+      ).rejects.toThrow(ServiceUnavailableException);
     });
   });
 
-  describe('body validation', () => {
-    it('throws 400 when createAppSession definition missing', async () => {
+  describe('invite', () => {
+    it('throws 400 when both addresses missing', async () => {
       await expect(
-        controller.createAppSession({ definition: undefined, allocations: [] } as any),
-      ).rejects.toThrow('Body must include definition and allocations');
+        controller.invite({ token: 'usdc', amountInitiator: '100', amountInvitee: '0' } as any),
+      ).rejects.toThrow(BadRequestException);
     });
+  });
 
-    it('throws 400 when transfer has no destination', async () => {
+  describe('list sessions', () => {
+    it('returns empty when disabled', async () => {
+      yellowService.isEnabled.mockReturnValue(false);
+      expect(await controller.list()).toEqual([]);
+    });
+  });
+
+  describe('close', () => {
+    it('throws 400 when allocations missing', async () => {
       await expect(
-        controller.transfer({ allocations: [{ asset: 'USDC', amount: '100' }] }),
-      ).rejects.toThrow('Either destination');
+        controller.close('sess-1', { allocations: [] } as any),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

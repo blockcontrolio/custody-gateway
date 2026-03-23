@@ -9,8 +9,6 @@ import {
   HttpStatus,
   BadRequestException,
   ServiceUnavailableException,
-  InternalServerErrorException,
-  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,34 +19,33 @@ import {
   ApiQuery,
   ApiBody,
 } from '@nestjs/swagger';
-import { YellowClientService } from './client/yellow-client.service';
-import { YellowService } from './handler/yellow.service';
-import { YellowAuthService } from './auth/yellow-auth.service';
-import { AccountService } from '../account';
-import type { StoredSession } from './handler/yellow.service';
+import { YellowClientService } from './client/yellow-client.service.js';
+import { YellowService } from './handler/yellow.service.js';
+import { AccountService } from '../account/index.js';
+import { InvitationRepository } from '../repository/invitation.repository.js';
+import { CustodyService } from '../custody/custody.service.js';
+import { ChannelFundingService } from '../custody/channel-funding.service.js';
+import { resolveTokenAddress, toDecimal, parseDecimalToBaseUnits, DEFAULT_CHAIN } from '../custody/custody.constants.js';
+import type { StoredSession } from './handler/yellow.service.js';
 import {
-  CreateAppSessionDto,
   SubmitAppStateDto,
   CloseAppSessionDto,
-  ResizeChannelDto,
-  TransferDto,
   StoredSessionDto,
-} from './dto';
-import type { Hex } from 'viem';
-import { RPCChannelStatus } from '@erc7824/nitrolite';
+  CreateInvitationDto,
+} from './dto/index.js';
+import type { Address, Hex } from 'viem';
+import { RPCProtocolVersion } from '@erc7824/nitrolite';
 
-const YELLOW_PREFIX = 'yellow';
-
-@ApiTags('Yellow')
-@Controller(YELLOW_PREFIX)
+@ApiTags('Sessions')
+@Controller('sessions')
 export class YellowController {
-  private readonly logger = new Logger(YellowController.name);
-
   constructor(
     private readonly yellowClient: YellowClientService,
     private readonly yellowService: YellowService,
-    private readonly yellowAuth: YellowAuthService,
     private readonly accountService: AccountService,
+    private readonly invitationRepo: InvitationRepository,
+    private readonly custodyService: CustodyService,
+    private readonly channelFunding: ChannelFundingService,
   ) {}
 
   private ensureYellowReady(): void {
@@ -59,411 +56,309 @@ export class YellowController {
     }
     if (!this.yellowClient.isConfigured()) {
       throw new ServiceUnavailableException(
-        'Yellow signer not configured (YELLOW_SIGNER_PRIVATE_KEY required for outgoing RPC)',
+        'Yellow signer not configured (YELLOW_SIGNER_PRIVATE_KEY required)',
       );
     }
   }
 
-  /** Extract a meaningful error message from RPC or unknown errors. */
   private rpcError(err: unknown): string {
     if (err instanceof Error) return err.message;
     if (typeof err === 'string') return err;
     return JSON.stringify(err);
   }
 
-  /** Enrich sparse ClearNode RPC result with participants and allocations. */
-  private enrichRpcResult(
-    result: unknown,
-    participants: string[],
-    allocations: Array<{ asset: string; amount: string; participant: string }>,
-  ): unknown {
-    const r = (result ?? {}) as Record<string, unknown>;
-    return {
-      ...r,
-      participants: r.participants ?? participants,
-      allocations: allocations.map((a) => ({
-        asset: a.asset,
-        amount: a.amount,
-        participant: a.participant,
-      })),
-    };
+  // ─── Invitations ───────────────────────────────────────
+
+  @Post('invite')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Invite another user to a session' })
+  @ApiBody({ type: CreateInvitationDto })
+  @ApiCreatedResponse({ description: 'Invitation created' })
+  async invite(@Body() body: CreateInvitationDto): Promise<unknown> {
+    const initiator = await this.accountService.resolveAddress(body.initiatorUserId);
+    const invitee = await this.accountService.resolveAddress(body.inviteeUserId);
+    if (!initiator || !invitee) {
+      throw new BadRequestException('Both initiatorUserId and inviteeUserId must resolve to valid addresses');
+    }
+
+    return this.invitationRepo.create({
+      token: body.token,
+      initiatorAddr: initiator,
+      inviteeAddr: invitee,
+      amountInitiator: body.amountInitiator,
+      amountInvitee: body.amountInvitee,
+    });
   }
 
-  /** Status: is Yellow enabled, configured, and whether we have a session token. */
-  @Get('status')
-  @ApiOperation({
-    summary: 'Yellow status (enabled, configured, hasSessionToken)',
-  })
-  @ApiOkResponse({ description: 'Status flags' })
-  getStatus(): {
-    enabled: boolean;
-    configured: boolean;
-    hasSessionToken: boolean;
-  } {
-    return {
-      enabled: this.yellowService.isEnabled(),
-      configured: this.yellowClient.isConfigured(),
-      hasSessionToken: !!this.yellowAuth.getSessionToken(),
-    };
+  @Get('invitations')
+  @ApiOperation({ summary: 'List pending invitations for a user' })
+  @ApiQuery({ name: 'userId', required: true })
+  @ApiQuery({ name: 'role', required: false, enum: ['invitee', 'initiator'] })
+  @ApiOkResponse({ description: 'Pending invitations' })
+  async listInvitations(
+    @Query('userId') userId?: string,
+    @Query('role') role?: string,
+  ): Promise<unknown> {
+    if (!userId) {
+      throw new BadRequestException('userId is required');
+    }
+    const address = await this.accountService.resolveAddress(userId);
+    if (!address) {
+      throw new BadRequestException('User not found');
+    }
+    if (role === 'initiator') {
+      return this.invitationRepo.findPendingByInitiator(address);
+    }
+    return this.invitationRepo.findPendingForAddress(address);
   }
 
-  /** List all known app sessions (active, from DB or cache). */
-  @Get('sessions')
-  @ApiOperation({ summary: 'List all app sessions' })
-  @ApiOkResponse({ description: 'List of sessions', type: [StoredSessionDto] })
-  async listSessions(): Promise<StoredSession[]> {
+  /**
+   * Accept invitation → auto-prepare wallets → create session.
+   *
+   * Under the hood:
+   *   1. Auth both wallets with ClearNode
+   *   2. Deposit tokens → Custody contract
+   *   3. Create channels + resize (fund unified balances)
+   *   4. Create app session (NitroRPC/0.4)
+   */
+  @Post('invitations/:id/accept')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Accept invitation (auto-prepares wallets + creates session)' })
+  @ApiParam({ name: 'id', description: 'Invitation ID' })
+  @ApiOkResponse({ description: 'Session created' })
+  async accept(@Param('id') id: string): Promise<unknown> {
+    this.ensureYellowReady();
+
+    const invitation = await this.invitationRepo.findById(id);
+    if (!invitation) {
+      throw new BadRequestException('Invitation not found');
+    }
+    if (invitation.status !== 'pending') {
+      throw new BadRequestException(`Invitation already ${invitation.status}`);
+    }
+
+    const participants = [invitation.initiatorAddr, invitation.inviteeAddr] as Hex[];
+    const chainName = DEFAULT_CHAIN;
+    const tokenAddress = resolveTokenAddress(invitation.token, chainName);
+    if (!tokenAddress) {
+      throw new BadRequestException(`Unknown token: ${invitation.token}`);
+    }
+    // Build participant allocations (base units for funding, decimal for ClearNode RPC)
+    const participantAmounts = [
+      { participant: invitation.initiatorAddr, amount: invitation.amountInitiator },
+      { participant: invitation.inviteeAddr, amount: invitation.amountInvitee },
+    ];
+    const allocations = participantAmounts.map((pa) => ({
+      asset: invitation.token,
+      amount: toDecimal(pa.amount),
+      participant: pa.participant,
+    }));
+
+    // ── Fund participants (channels → ledger) ──
+    for (const pa of participantAmounts) {
+      if (BigInt(pa.amount) > 0n) {
+        try {
+          await this.channelFunding.ensureLedgerBalance(
+            pa.participant as Address,
+            invitation.token,
+            pa.amount,
+            chainName,
+          );
+        } catch (err) {
+          throw new BadRequestException(
+            `Failed to fund ${pa.participant}: ${this.rpcError(err)}`,
+          );
+        }
+      }
+    }
+
+    // ── Create app session via RPC ──
+    const definition = {
+      protocol: RPCProtocolVersion.NitroRPC_0_4,
+      participants,
+      weights: [100, 100],
+      quorum: 200,
+      challenge: 86400,
+      nonce: Date.now(),
+      application: 'custody-gateway',
+    };
+
+    try {
+      const result = await this.yellowClient.createAppSession({
+        definition,
+        allocations: allocations as Parameters<YellowClientService['createAppSession']>[0]['allocations'],
+        session_data: String(Date.now()),
+      });
+
+      const rpcResult = result as { app_session_id?: string; version?: number } | undefined;
+      const sessionId = rpcResult?.app_session_id ?? `0x${Date.now().toString(16)}`;
+
+      await this.invitationRepo.accept(id, sessionId);
+      await this.yellowService.onSessionCreated(sessionId, { participants, allocations });
+
+      return {
+        sessionId,
+        status: 'open',
+        participants,
+        allocations,
+      };
+    } catch (err) {
+      throw new BadRequestException(`Create session failed: ${this.rpcError(err)}`);
+    }
+  }
+
+  @Post('invitations/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject invitation' })
+  @ApiParam({ name: 'id' })
+  async reject(@Param('id') id: string): Promise<unknown> {
+    const invitation = await this.invitationRepo.findById(id);
+    if (!invitation) throw new BadRequestException('Invitation not found');
+    if (invitation.status !== 'pending') {
+      throw new BadRequestException(`Invitation already ${invitation.status}`);
+    }
+    await this.invitationRepo.reject(id);
+    return { ...invitation, status: 'rejected' };
+  }
+
+  // ─── Recovery / Debug ─────────────────────────────────
+
+  @Post('recover-funds')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Withdraw stuck funds from Custody contract back to wallet' })
+  async recoverFunds(
+    @Body() body: { address: string; asset: string; chainName?: string },
+  ): Promise<unknown> {
+    const chainName = body.chainName || DEFAULT_CHAIN;
+    const tokenAddress = resolveTokenAddress(body.asset, chainName);
+    if (!tokenAddress) throw new BadRequestException(`Unknown token ${body.asset}`);
+
+    const bal = await this.custodyService.getCustodyBalance(body.address as Address, tokenAddress, chainName);
+    if (BigInt(bal.balance) === 0n) return { withdrawn: '0' };
+
+    const tx = await this.custodyService.withdraw(body.address as Address, tokenAddress, bal.balance, chainName);
+    return { withdrawn: bal.balance, txHash: tx.txHash };
+  }
+
+  // ─── Sessions ──────────────────────────────────────────
+
+  @Get()
+  @ApiOperation({ summary: 'List all sessions' })
+  @ApiOkResponse({ type: [StoredSessionDto] })
+  async list(): Promise<StoredSession[]> {
     if (!this.yellowService.isEnabled()) return [];
     return this.yellowService.getAllSessions();
   }
 
-  /** Get one session by id. */
-  @Get('sessions/:sessionId')
-  @ApiOperation({ summary: 'Get session by id' })
+  @Get(':sessionId')
+  @ApiOperation({ summary: 'Get session by ID (with current state)' })
   @ApiParam({ name: 'sessionId' })
-  @ApiOkResponse({ description: 'Session or null', type: StoredSessionDto })
-  async getSession(
-    @Param('sessionId') sessionId: string,
-  ): Promise<StoredSession | null> {
+  @ApiOkResponse({ type: StoredSessionDto })
+  async get(@Param('sessionId') sessionId: string): Promise<StoredSession | null> {
     if (!this.yellowService.isEnabled()) return null;
-    const session = await this.yellowService.getSession(sessionId);
-    return session ?? null;
+    return (await this.yellowService.getSession(sessionId)) ?? null;
   }
 
-  /** Create app session (create_app_session). */
-  @Post('sessions')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create app session' })
-  @ApiBody({ type: CreateAppSessionDto })
-  @ApiCreatedResponse({
-    description: 'RPC result (sessionId / app_session_id)',
-  })
-  async createAppSession(@Body() body: CreateAppSessionDto): Promise<unknown> {
-    this.ensureYellowReady();
-    if (!body.definition || !Array.isArray(body.allocations)) {
-      throw new BadRequestException(
-        'Body must include definition and allocations',
-      );
-    }
-    if (!body.definition.participants?.length) {
-      throw new BadRequestException(
-        'definition.participants must contain at least one address',
-      );
-    }
-    if (!body.allocations.length) {
-      throw new BadRequestException(
-        'allocations must contain at least one entry',
-      );
-    }
-
-    // Auto-set nonce if zero or missing — ClearNode requires a non-zero nonce
-    if (!body.definition.nonce) {
-      body.definition.nonce = Date.now();
-    }
-
-    // Auto-set session_data as timestamp
-    body.session_data = String(Date.now());
-
-    try {
-      const result = await this.yellowClient.createAppSession(
-        body as Parameters<YellowClientService['createAppSession']>[0],
-      );
-
-      // Store session with participants & allocations
-      const rpcResult = result as { app_session_id?: string } | undefined;
-      if (rpcResult?.app_session_id) {
-        await this.yellowService.onSessionCreated(rpcResult.app_session_id, {
-          participants: body.definition.participants,
-          allocations: body.allocations.map((a) => ({
-            asset: a.asset,
-            amount: a.amount,
-            participant: a.participant,
-          })),
-        });
-      }
-
-      return this.enrichRpcResult(result, body.definition.participants, body.allocations);
-    } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`createAppSession failed: ${msg}`);
-      throw new BadRequestException(`Create session failed: ${msg}`);
-    }
-  }
-
-  /** Submit app state (submit_app_state, protocol 0.2). */
-  @Post('sessions/:sessionId/state')
+  @Post(':sessionId/state')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Submit app state' })
+  @ApiOperation({ summary: 'Update session state (change allocations)' })
   @ApiParam({ name: 'sessionId' })
   @ApiBody({ type: SubmitAppStateDto })
-  @ApiOkResponse({ description: 'RPC result' })
-  async submitAppState(
+  @ApiOkResponse({ description: 'Updated state' })
+  async updateState(
     @Param('sessionId') sessionId: string,
     @Body() body: SubmitAppStateDto,
   ): Promise<unknown> {
+    if (!body.allocations?.length) {
+      throw new BadRequestException('allocations are required');
+    }
     this.ensureYellowReady();
-    if (!body.allocations || !Array.isArray(body.allocations)) {
-      throw new BadRequestException('Body must include allocations');
-    }
-    if (!sessionId) {
-      throw new BadRequestException('sessionId path parameter is required');
-    }
 
-    // Auto-set session_data as timestamp
-    body.session_data = String(Date.now());
+    // Auto-manage intent & version (NitroRPC/0.4)
+    const session = await this.yellowService.getSession(sessionId);
+    const version = (session?.stateVersion ?? 1) + 1;
 
     try {
       const result = await this.yellowClient.submitAppState({
         app_session_id: sessionId as Hex,
-        allocations: body.allocations as Parameters<
-          YellowClientService['submitAppState']
-        >[0]['allocations'],
-        session_data: body.session_data,
+        intent: 'operate',
+        version,
+        allocations: body.allocations as Parameters<YellowClientService['submitAppState']>[0]['allocations'],
+        session_data: String(Date.now()),
       });
 
-      const participants = [...new Set(body.allocations.map((a) => a.participant))];
-
-      // Update stored allocations so GET session returns current balances
       await this.yellowService.updateSessionAllocations(
         sessionId,
         body.allocations.map((a) => ({ asset: a.asset, amount: a.amount, participant: a.participant })),
+        version,
       );
 
-      return this.enrichRpcResult(result, participants, body.allocations);
+      return {
+        sessionId,
+        allocations: body.allocations,
+        rpc_result: result,
+      };
     } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`submitAppState failed: ${msg}`);
-      throw new BadRequestException(`Submit state failed: ${msg}`);
+      throw new BadRequestException(`Update state failed: ${this.rpcError(err)}`);
     }
   }
 
-  /** Close app session (close_app_session). */
-  @Post('sessions/:sessionId/close')
+  @Post(':sessionId/close')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Close app session' })
+  @ApiOperation({ summary: 'Close session' })
   @ApiParam({ name: 'sessionId' })
   @ApiBody({ type: CloseAppSessionDto })
-  @ApiOkResponse({ description: 'RPC result' })
-  async closeAppSession(
+  @ApiOkResponse({ description: 'Session closed' })
+  async close(
     @Param('sessionId') sessionId: string,
     @Body() body: CloseAppSessionDto,
   ): Promise<unknown> {
+    if (!body.allocations?.length) {
+      throw new BadRequestException('allocations are required');
+    }
     this.ensureYellowReady();
-    if (!body.allocations || !Array.isArray(body.allocations)) {
-      throw new BadRequestException('Body must include allocations');
-    }
-    if (!sessionId) {
-      throw new BadRequestException('sessionId path parameter is required');
-    }
 
-    // Auto-set session_data as timestamp
-    body.session_data = String(Date.now());
-
+    // 1. Close app session via RPC
     try {
-      const result = await this.yellowClient.closeAppSession({
+      await this.yellowClient.closeAppSession({
         app_session_id: sessionId as Hex,
-        allocations: body.allocations as Parameters<
-          YellowClientService['closeAppSession']
-        >[0]['allocations'],
-        session_data: body.session_data,
+        allocations: body.allocations as Parameters<YellowClientService['closeAppSession']>[0]['allocations'],
+        session_data: String(Date.now()),
       });
-
-      const participants = [...new Set(body.allocations.map((a) => a.participant))];
-      return this.enrichRpcResult(result, participants, body.allocations);
+      await this.yellowService.onSessionClosed(sessionId);
     } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`closeAppSession failed: ${msg}`);
-      throw new BadRequestException(`Close session failed: ${msg}`);
-    }
-  }
-
-  /** Get channels (get_channels). Optional query: participant, status (open | closed | challenged). */
-  @Get('channels')
-  @ApiOperation({ summary: 'Get channels' })
-  @ApiQuery({ name: 'participant', required: false, example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2' })
-  @ApiQuery({
-    name: 'status',
-    required: false,
-    enum: ['open', 'closed', 'challenged'],
-  })
-  @ApiOkResponse({ description: 'RPC result (channels)' })
-  async getChannels(
-    @Query('participant') participant?: string,
-    @Query('status') status?: string,
-  ): Promise<unknown> {
-    this.ensureYellowReady();
-    const statusEnum =
-      status === 'open'
-        ? RPCChannelStatus.Open
-        : status === 'closed'
-          ? RPCChannelStatus.Closed
-          : status === 'challenged'
-            ? RPCChannelStatus.Challenged
-            : undefined;
-
-    try {
-      return await this.yellowClient.getChannels(
-        participant as Hex | undefined,
-        statusEnum,
-      );
-    } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`getChannels failed: ${msg}`);
-      throw new InternalServerErrorException(`Get channels failed: ${msg}`);
-    }
-  }
-
-  /** Resize channel — add or remove funds without closing. */
-  @Post('channels/:channelId/resize')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Resize channel' })
-  @ApiParam({ name: 'channelId', description: 'Channel ID (hex)' })
-  @ApiBody({ type: ResizeChannelDto })
-  @ApiOkResponse({ description: 'RPC result' })
-  async resizeChannel(
-    @Param('channelId') channelId: string,
-    @Body() body: ResizeChannelDto,
-  ): Promise<unknown> {
-    this.ensureYellowReady();
-    if (!body.funds_destination) {
-      throw new BadRequestException('funds_destination is required');
-    }
-    if (!body.resize_amount && !body.allocate_amount) {
-      throw new BadRequestException(
-        'Either resize_amount or allocate_amount is required',
-      );
+      throw new BadRequestException(`Close session failed: ${this.rpcError(err)}`);
     }
 
-    try {
-      return await this.yellowClient.resizeChannel({
-        channel_id: channelId as Hex,
-        ...(body.resize_amount != null && {
-          resize_amount: BigInt(body.resize_amount),
-        }),
-        ...(body.allocate_amount != null && {
-          allocate_amount: BigInt(body.allocate_amount),
-        }),
-        funds_destination: body.funds_destination as Hex,
-      });
-    } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`resizeChannel failed: ${msg}`);
-      throw new BadRequestException(`Resize channel failed: ${msg}`);
-    }
-  }
+    // 2. Withdraw funds back to each participant's wallet
+    const chainName = DEFAULT_CHAIN;
+    const withdrawals: Array<{ participant: string; amount: string; txHash?: string; error?: string }> = [];
 
-  /** Request sandbox faucet tokens for an address (sandbox only). */
-  @Post('faucet')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Request sandbox faucet tokens' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: { address: { type: 'string', example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2' } },
-      required: ['address'],
-    },
-  })
-  @ApiOkResponse({ description: 'Faucet result' })
-  async faucet(@Body() body: { address?: string; userId?: string }): Promise<unknown> {
-    if (body.userId && !body.address) {
-      try {
-        body.address = await this.accountService.resolveAddress(body.userId);
-      } catch {
-        throw new BadRequestException(`Could not resolve userId "${body.userId}" to an address`);
+    for (const alloc of body.allocations) {
+      const baseUnits = parseDecimalToBaseUnits(alloc.amount, 6);
+      if (baseUnits <= 0n) {
+        withdrawals.push({ participant: alloc.participant, amount: '0' });
+        continue;
       }
-    }
-    if (!body.address) {
-      throw new BadRequestException('address or userId is required');
-    }
-
-    try {
-      const res = await fetch(
-        'https://clearnet-sandbox.yellow.com/faucet/requestTokens',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userAddress: body.address }),
-        },
-      );
-      const json = (await res.json()) as Record<string, unknown>;
-      if (!json.success) {
-        throw new BadRequestException(`Faucet failed: ${JSON.stringify(json)}`);
-      }
-      return json;
-    } catch (err) {
-      if (err instanceof BadRequestException) throw err;
-      const msg = this.rpcError(err);
-      this.logger.error(`faucet failed: ${msg}`);
-      throw new InternalServerErrorException(`Faucet request failed: ${msg}`);
-    }
-  }
-
-  /** Get ledger balances (off-chain unified balance). Accepts userId or account address. */
-  @Get('ledger-balances')
-  @ApiOperation({ summary: 'Get ledger balances' })
-  @ApiQuery({ name: 'account', required: false, example: '0x2cb4e55874C087a141Db82A30A8FB6FA87F202B2', description: 'Account address (defaults to own)' })
-  @ApiQuery({ name: 'userId', required: false, description: 'Resolve userId to account address' })
-  @ApiOkResponse({ description: 'Ledger balances' })
-  async getLedgerBalances(
-    @Query('account') account?: string,
-    @Query('userId') userId?: string,
-  ): Promise<unknown> {
-    this.ensureYellowReady();
-    if (userId && !account) {
       try {
-        account = await this.accountService.resolveAddress(userId);
-      } catch {
-        throw new BadRequestException(`Could not resolve userId "${userId}" to an address`);
-      }
-    }
-
-    try {
-      return await this.yellowClient.getLedgerBalances(account);
-    } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`getLedgerBalances failed: ${msg}`);
-      throw new BadRequestException(`Get ledger balances failed: ${msg}`);
-    }
-  }
-
-  /** Transfer. Accepts userId / destinationUserId as alternatives to addresses. */
-  @Post('transfer')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Transfer' })
-  @ApiBody({ type: TransferDto })
-  @ApiOkResponse({ description: 'RPC result' })
-  async transfer(@Body() body: TransferDto & { userId?: string; destinationUserId?: string }): Promise<unknown> {
-    this.ensureYellowReady();
-    if (!body.allocations || !Array.isArray(body.allocations)) {
-      throw new BadRequestException('Body must include allocations');
-    }
-    if (!body.allocations.length) {
-      throw new BadRequestException('allocations must contain at least one entry');
-    }
-
-    // Resolve userId → destination address
-    if (body.destinationUserId && !body.destination) {
-      try {
-        body.destination = await this.accountService.resolveAddress(body.destinationUserId);
-      } catch {
-        throw new BadRequestException(
-          `Could not resolve destinationUserId "${body.destinationUserId}" to an address`,
+        const result = await this.channelFunding.withdrawToWallet(
+          alloc.participant as Address,
+          alloc.asset,
+          baseUnits.toString(),
+          chainName,
         );
+        withdrawals.push({ participant: alloc.participant, amount: alloc.amount, txHash: result.txHash });
+      } catch (err) {
+        // Don't fail the whole close — session is already closed, log and continue
+        withdrawals.push({ participant: alloc.participant, amount: alloc.amount, error: this.rpcError(err) });
       }
     }
-    if (!body.destination && !body.destination_user_tag) {
-      throw new BadRequestException(
-        'Either destination, destinationUserId, or destination_user_tag is required',
-      );
-    }
 
-    try {
-      return await this.yellowClient.transfer(
-        body as Parameters<YellowClientService['transfer']>[0],
-      );
-    } catch (err) {
-      const msg = this.rpcError(err);
-      this.logger.error(`transfer failed: ${msg}`);
-      throw new BadRequestException(`Transfer failed: ${msg}`);
-    }
+    return {
+      sessionId,
+      status: 'closed',
+      allocations: body.allocations,
+      withdrawals,
+    };
   }
 }

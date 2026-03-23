@@ -1,8 +1,8 @@
-import { ClearNodeService } from './clear-node.service';
-import { YellowAuthService } from '../yellow/auth/yellow-auth.service';
-import { YellowService } from '../yellow/handler/yellow.service';
-import { YellowParserService } from '../yellow/parser/yellow-parser.service';
-import { ParsedMessage } from '../yellow/yellow.types';
+import { ClearNodeService } from './clear-node.service.js';
+import { YellowAuthService } from '../yellow/auth/yellow-auth.service.js';
+import { YellowService } from '../yellow/handler/yellow.service.js';
+import { YellowParserService } from '../yellow/parser/yellow-parser.service.js';
+import { ParsedMessage } from '../yellow/yellow.types.js';
 
 const mockWsInstances: Array<{
   onmessage: ((event: { data: string }) => void) | null;

@@ -3,29 +3,30 @@ import {
   createAppSessionMessage,
   createSubmitAppStateMessage,
   createCloseAppSessionMessage,
-  createGetChannelsMessage,
+  createCreateChannelMessage,
   createResizeChannelMessage,
-  createTransferMessage,
+  createGetChannelsMessage,
   createGetLedgerBalancesMessage,
+  createCloseChannelMessage,
   createECDSAMessageSigner,
+  RPCAppStateIntent,
 } from '@erc7824/nitrolite';
 import type {
   MessageSigner,
   CreateAppSessionRequestParams,
   CloseAppSessionRequestParams,
-  ResizeChannelRequestParams,
-  TransferRequestParams,
+  SubmitAppStateRequestParamsV04,
+  SubmitAppStateRequestParamsV02,
 } from '@erc7824/nitrolite';
-import { RPCChannelStatus } from '@erc7824/nitrolite';
 import type { Address, Hex } from 'viem';
-import { ClearNodeService } from '../../clear-node/clear-node.service';
-import { YellowService } from '../handler/yellow.service';
-import type { PersistSignedStateData } from '../yellow.types';
-import { KeyProviderService } from '../providers/key-provider.service';
-import { KeyProvider } from '../../key-provider';
-import { RequestIdService } from '../providers/request-id.service';
-import { RPC_TIMEOUT_MS } from '../yellow.constants';
-import { toError } from '../yellow.utils';
+import { ClearNodeService } from '../../clear-node/clear-node.service.js';
+import { YellowService } from '../handler/yellow.service.js';
+import type { PersistSignedStateData } from '../yellow.types.js';
+import { KeyProviderService } from '../providers/key-provider.service.js';
+import { KeyProvider } from '../../key-provider/index.js';
+import { RequestIdService } from '../providers/request-id.service.js';
+import { RPC_TIMEOUT_MS } from '../yellow.constants.js';
+import { toError } from '../yellow.utils.js';
 
 @Injectable()
 export class YellowClientService {
@@ -171,6 +172,8 @@ export class YellowClientService {
 
   async submitAppState(params: {
     app_session_id: Hex;
+    intent?: string;
+    version?: number;
     allocations: Array<{ asset: string; amount: string; participant: Hex }>;
     session_data?: string;
   }): Promise<unknown> {
@@ -178,9 +181,29 @@ export class YellowClientService {
       ...new Set(params.allocations.map((a) => a.participant)),
     ] as Hex[];
     return this.rpc('submit_app_state', async (s, id) => {
+      let rpcParams: SubmitAppStateRequestParamsV04 | SubmitAppStateRequestParamsV02;
+
+      if (params.intent && params.version != null) {
+        // NitroRPC/0.4 — include intent and version
+        rpcParams = {
+          app_session_id: params.app_session_id,
+          intent: params.intent as RPCAppStateIntent,
+          version: params.version,
+          allocations: params.allocations,
+          session_data: params.session_data,
+        } satisfies SubmitAppStateRequestParamsV04;
+      } else {
+        // NitroRPC/0.2 — omit intent and version
+        rpcParams = {
+          app_session_id: params.app_session_id,
+          allocations: params.allocations,
+          session_data: params.session_data,
+        } satisfies SubmitAppStateRequestParamsV02;
+      }
+
       const msg = await createSubmitAppStateMessage(
         s,
-        params as Parameters<typeof createSubmitAppStateMessage>[1],
+        rpcParams as Parameters<typeof createSubmitAppStateMessage>[1],
         id,
       );
       if (participants.length > 1) {
@@ -209,32 +232,55 @@ export class YellowClientService {
     });
   }
 
-  async getChannels(
-    participant?: Hex,
-    status?: RPCChannelStatus,
-  ): Promise<unknown> {
-    return this.rpc('get_channels', (s, id) =>
-      createGetChannelsMessage(s, participant, status, id),
+  // ─── Channel RPC methods ────────────────────────────────────
+
+  async createChannel(
+    params: { chain_id: number; token: Address },
+    signerAddress?: string,
+  ): Promise<{ channel_id: string; channel: any; state: any; server_signature: string }> {
+    return this.rpc('create_channel', (s, id) =>
+      createCreateChannelMessage(s, params, id),
+      signerAddress,
     );
   }
 
   async resizeChannel(
-    params: ResizeChannelRequestParams,
-  ): Promise<unknown> {
+    params: { channel_id: Hex; resize_amount?: bigint; allocate_amount?: bigint; funds_destination: Address },
+    signerAddress?: string,
+  ): Promise<{ channel_id: string; state: any; server_signature: string }> {
     return this.rpc('resize_channel', (s, id) =>
       createResizeChannelMessage(s, params, id),
+      signerAddress,
     );
   }
 
-  async getLedgerBalances(accountId?: string): Promise<unknown> {
-    return this.rpc('get_ledger_balances', (s, id) =>
-      createGetLedgerBalancesMessage(s, accountId, id),
-    accountId);
+  async getChannels(
+    participant: Address,
+    signerAddress?: string,
+  ): Promise<{ channels: any[] }> {
+    return this.rpc('get_channels', (s, id) =>
+      createGetChannelsMessage(s, participant, undefined, id),
+      signerAddress,
+    );
   }
 
-  async transfer(params: TransferRequestParams): Promise<unknown> {
-    return this.rpc('transfer', (s, id) =>
-      createTransferMessage(s, params, id),
+  async getLedgerBalances(
+    signerAddress?: string,
+  ): Promise<{ ledger_balances: Array<{ asset: string; amount: string }> }> {
+    return this.rpc('get_ledger_balances', (s, id) =>
+      createGetLedgerBalancesMessage(s, undefined, id),
+      signerAddress,
+    );
+  }
+
+  async closeChannel(
+    channelId: Hex,
+    fundsDestination: Address,
+    signerAddress?: string,
+  ): Promise<{ state: any; server_signature: string }> {
+    return this.rpc('close_channel', (s, id) =>
+      createCloseChannelMessage(s, channelId, fundsDestination, id),
+      signerAddress,
     );
   }
 
@@ -247,42 +293,46 @@ export class YellowClientService {
       return;
     }
     const r = result as Record<string, unknown>;
-    const channelId =
-      typeof r?.channelId === 'string'
-        ? r.channelId
-        : typeof r?.channel_id === 'string'
-          ? r.channel_id
-          : undefined;
+    const channelId = field<string>(r, 'channelId', 'channel_id');
     const signatures = r?.signatures ?? r?.sigs;
     if (!channelId || !Array.isArray(signatures) || signatures.length === 0) {
       return;
     }
+
+    const intent = r?.intent;
     const data: PersistSignedStateData = {
       channelId,
-      sessionId:
-        typeof r?.sessionId === 'string'
-          ? r.sessionId
-          : typeof r?.app_session_id === 'string'
-            ? r.app_session_id
-            : undefined,
+      sessionId: field<string>(r, 'sessionId', 'app_session_id'),
       stateVersion:
-        typeof r?.stateVersion === 'number'
-          ? r.stateVersion
-          : ((r?.version as number) ?? 0),
+        typeof r?.stateVersion === 'number' ? r.stateVersion : ((r?.version as number) ?? 0),
       intent:
-        typeof r?.intent === 'string'
-          ? r.intent
-          : typeof r?.intent === 'number'
-            ? String(r.intent)
-            : 'OPERATE',
+        typeof intent === 'string' ? intent : typeof intent === 'number' ? String(intent) : 'OPERATE',
       stateData: r?.stateData ?? r?.state ?? {},
       allocations: r?.allocations ?? [],
       signatures,
       rawMessage:
-        typeof r?.rawMessage === 'string'
-          ? r.rawMessage
-          : JSON.stringify(result),
+        typeof r?.rawMessage === 'string' ? r.rawMessage : JSON.stringify(result),
     };
     void this.yellowService.persistSignedState(data);
   }
+}
+
+/**
+ * Extract a string field from an RPC result, trying camelCase then snake_case key.
+ * ClearNode responses are inconsistent in naming convention.
+ */
+function field<T = string>(
+  obj: Record<string, unknown> | undefined,
+  camelKey: string,
+  snakeKey: string,
+): T | undefined {
+  const camel = obj?.[camelKey];
+  if (camel != null && (typeof camel === 'string' || typeof camel === 'number')) {
+    return camel as T;
+  }
+  const snake = obj?.[snakeKey];
+  if (snake != null && (typeof snake === 'string' || typeof snake === 'number')) {
+    return snake as T;
+  }
+  return undefined;
 }

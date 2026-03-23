@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ClearNodeService } from './clear-node.service';
-import { YellowModule } from '../yellow/yellow.module';
+import { ClearNodeService } from './clear-node.service.js';
+import { YellowModule } from '../yellow/yellow.module.js';
 
 @Module({
   imports: [YellowModule],
